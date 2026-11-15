@@ -1,8 +1,10 @@
-# Al pushear un tag v* compila Linux y Windows y los publica en Releases.
+# Tag v*: compila Linux y Windows y los publica en Releases.
+# Manual (workflow_dispatch): solo compila y deja los paquetes como artefacto, sin tocar Releases.
 name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
@@ -11,6 +13,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: packaging/build.sh
-      - run: gh release create "$GITHUB_REF_NAME" dist/spoti-linux-x86_64.tar.gz dist/spoti-windows-x86_64.zip --generate-notes
+      - if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: spoti-packages
+          path: |
+            dist/spoti-linux-x86_64.tar.gz
+            dist/spoti-windows-x86_64.zip
+      - if: startsWith(github.ref, 'refs/tags/')
+        run: gh release create "$GITHUB_REF_NAME" dist/spoti-linux-x86_64.tar.gz dist/spoti-windows-x86_64.zip --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
