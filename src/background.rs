@@ -11,7 +11,7 @@ pub struct Background {
 
 impl Default for Background {
     fn default() -> Self {
-        Self { enabled: !crate::winstart::safe_glyphs(), raster: Raster::default() }
+        Self { enabled: true, raster: Raster::default() }
     }
 }
 
@@ -29,7 +29,7 @@ impl Background {
             for x in 0..width {
                 let bits = dots[y * width + x];
                 if bits == 0 { continue; }
-                let character = char::from_u32(0x2800 + bits as u32).unwrap();
+                let character = crate::winstart::dot_char(bits);
                 buffer[(area.x + x as u16, area.y + y as u16)]
                     .set_char(character)
                     .set_fg(if (x + y * 2) % 19 < 12 { violet } else { green })

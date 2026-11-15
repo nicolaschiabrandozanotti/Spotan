@@ -14,7 +14,7 @@ pub struct Background {
 }
 
 impl Default for Background {
-    fn default() -> Self {Self {enabled:!spoti_tools::winstart::safe_glyphs(),raster:Mutex::new(braille::Raster::default()),last_cells:Mutex::new(Vec::new())}}
+    fn default() -> Self {Self {enabled:true,raster:Mutex::new(braille::Raster::default()),last_cells:Mutex::new(Vec::new())}}
 }
 
 fn blend(background: Color, accent: Color, amount: f64) -> Color {
@@ -66,7 +66,7 @@ impl Background {
         });
         for &(x,y,bits) in cells.iter() {
             let color=if (x+(y-top)*2)%19<12 {violet}else{green};
-            let character=char::from_u32(0x2800+bits as u32).unwrap();
+            let character=spoti_tools::winstart::dot_char(bits);
             printer.with_color(ColorStyle::new(color,background),|printer|printer.print((x,y),character.encode_utf8(&mut [0;4])));
         }
     }

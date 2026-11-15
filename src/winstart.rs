@@ -22,6 +22,15 @@ pub fn glyph(fancy: &'static str, plain: &'static str) -> &'static str {
     if safe_glyphs() { plain } else { fancy }
 }
 
+/// Background cell for a braille dot pattern; plain ASCII density where braille would be tofu.
+pub fn dot_char(bits: u8) -> char {
+    if safe_glyphs() { density(bits) } else { char::from_u32(0x2800 + bits as u32).unwrap() }
+}
+
+fn density(bits: u8) -> char {
+    match bits.count_ones() { 0 => ' ', 1..=2 => '.', 3..=5 => ':', _ => '+' }
+}
+
 /// Windows entry point: write the default config if missing, then relaunch in Windows Terminal
 /// when double-clicked from its own conhost window. May exit the process.
 #[cfg(windows)]
@@ -51,6 +60,12 @@ fn relaunch_in_windows_terminal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn density_is_ascii_and_grows_with_dots() {
+        let chars: Vec<char> = [0u8, 0b1, 0b111, 0xff].iter().map(|&b| density(b)).collect();
+        assert_eq!(chars, [' ', '.', ':', '+']);
+    }
 
     #[test]
     fn bootstrap_writes_once_without_nerdfont() {
