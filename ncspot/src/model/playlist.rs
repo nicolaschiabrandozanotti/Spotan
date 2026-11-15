@@ -221,7 +221,7 @@ impl ListItem for Playlist {
             if library.cfg.values().use_nerdfont.unwrap_or(false) {
                 "\u{f012c} "
             } else {
-                "✓ "
+                crate::utils::glyph("✓ ", "* ")
             }
         } else {
             ""

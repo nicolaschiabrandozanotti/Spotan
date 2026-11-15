@@ -71,7 +71,7 @@ impl Playable {
                     if library.cfg.values().use_nerdfont.unwrap_or_default() {
                         "\u{f012c}"
                     } else {
-                        "✓"
+                        crate::utils::glyph("✓", "*")
                     }
                 } else {
                     ""

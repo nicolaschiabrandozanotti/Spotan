@@ -133,8 +133,8 @@ impl View for TabbedView {
             });
         }
         printer.with_color(ColorStyle::title_primary(),|printer| {
-            if header.before {printer.print((0,0),"‹");}
-            if header.after && printer.size.x>0 {printer.print((printer.size.x-1,0),"›");}
+            if header.before {printer.print((0,0),crate::utils::glyph("‹", "<"));}
+            if header.after && printer.size.x>0 {printer.print((printer.size.x-1,0),crate::utils::glyph("›", ">"));}
         });
 
         if let Some(tab) = self.tabs.get(self.selected) {

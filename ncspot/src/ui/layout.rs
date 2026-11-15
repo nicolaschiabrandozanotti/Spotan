@@ -342,7 +342,7 @@ impl View for Layout {
         if let Some(view) = self.get_top_view() {
             if header>1 {
                 if !self.is_current_stack_empty() {
-                    printer.with_color(ColorStyle::title_secondary(),|printer|printer.print((0,1),"‹ Volver"));
+                    printer.with_color(ColorStyle::title_secondary(),|printer|printer.print((0,1),crate::utils::glyph("‹ Volver", "< Volver")));
                 }
                 let title=view.title();
                 let left=if self.is_current_stack_empty() {0} else {9};

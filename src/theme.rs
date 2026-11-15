@@ -1,5 +1,8 @@
 use ratatui::style::{Color, Style};
-use std::fs;
+use std::{fs, path::Path, sync::Mutex, time::SystemTime};
+
+type Cache = Mutex<Option<((SystemTime, u64), Theme)>>;
+static CACHE: Cache = Mutex::new(None);
 
 #[derive(Clone, Debug)]
 pub struct Theme {
@@ -42,9 +45,21 @@ fn color(value: &str) -> Option<Color> {
 }
 
 impl Theme {
-    pub fn read() -> Self {
+    pub fn read() -> Self { Self::read_cached(&crate::config_home().join("ncspot/config.toml"), &CACHE) }
+    // Re-parses only when mtime/len changed; a missing file is never cached.
+    fn read_cached(path: &Path, cache: &Cache) -> Self {
+        let stamp = fs::metadata(path).and_then(|m| Ok((m.modified()?, m.len()))).ok();
+        let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let (Some(stamp), Some((old, theme))) = (stamp, cache.as_ref()) {
+            if *old == stamp { return theme.clone(); }
+        }
+        let theme = Self::parse(path);
+        *cache = stamp.map(|s| (s, theme.clone()));
+        theme
+    }
+    fn parse(path: &Path) -> Self {
         let mut theme = Self::default();
-        let data = fs::read_to_string(crate::config_home().join("ncspot/config.toml")).unwrap_or_default();
+        let data = fs::read_to_string(path).unwrap_or_default();
         if let Ok(config) = data.parse::<toml::Value>() {
             for (key, target) in [
                 ("background", &mut theme.background), ("primary", &mut theme.primary),
@@ -72,5 +87,19 @@ mod tests {
         assert_eq!(color("#1e1e2e"), Some(Color::Rgb(30,30,46)));
         assert_eq!(color("light green"), Some(Color::LightGreen));
         assert_eq!(color("#broken"), None);
+    }
+    #[test]
+    fn read_cached_reparses_only_on_change() {
+        let path = std::env::temp_dir().join(format!("spoti-theme-{}.toml", std::process::id()));
+        let cache: Cache = Mutex::new(None);
+        fs::write(&path, "[theme]\nbackground = \"red\"\n").unwrap();
+        assert_eq!(Theme::read_cached(&path, &cache).background, Color::Red);
+        // Same len, forged cached theme: a hit must return it without re-reading.
+        let m = fs::metadata(&path).unwrap();
+        *cache.lock().unwrap() = Some(((m.modified().unwrap(), m.len()), Theme { background: Color::Blue, ..Theme::default() }));
+        assert_eq!(Theme::read_cached(&path, &cache).background, Color::Blue);
+        fs::write(&path, "[theme]\nbackground = \"green\"\n").unwrap();
+        assert_eq!(Theme::read_cached(&path, &cache).background, Color::Green);
+        fs::remove_file(&path).unwrap();
     }
 }

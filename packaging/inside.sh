@@ -1,7 +1,6 @@
 #!/bin/sh
 set -eu
-# OpenSSL estático: Fedora 45/Arch ya traen OpenSSL 4 y no tienen libssl.so.3.
-OPENSSL_STATIC=1 OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu OPENSSL_INCLUDE_DIR=/usr/include cargo build --locked --profile distribution --features native --bin ncspot
+cargo build --locked --profile distribution --features native --bin ncspot
 cargo build --locked --profile distribution --target x86_64-pc-windows-gnu --bin ncspot \
   --no-default-features --features panels,rodio_backend,crossterm_backend
 

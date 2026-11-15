@@ -1,3 +1,4 @@
+use crate::utils::glyph;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -55,8 +56,8 @@ impl StatusBar {
         const NF_PAUSE: &str = "\u{f04c} ";
         const NF_STOP: &str = "\u{f04d} ";
         let indicators = match (nerdfont, flipped) {
-            (false, false) => ("▶ ", "▮▮", "◼ "),
-            (false, true) => ("▮▮", "▶ ", "▶ "),
+            (false, false) => (glyph("▶ ", "> "), glyph("▮▮", "||"), glyph("◼ ", "[] ")),
+            (false, true) => (glyph("▮▮", "||"), glyph("▶ ", "> "), glyph("▶ ", "> ")),
             (true, false) => (NF_PLAY, NF_PAUSE, NF_STOP),
             (true, true) => (NF_PAUSE, NF_PLAY, NF_PLAY),
         };
@@ -171,7 +172,7 @@ impl View for StatusBar {
         };
 
         printer.with_color(style_bar_bg, |printer| {
-            printer.print((0, 0), &"┉".repeat(printer.size.x));
+            printer.print((0, 0), &glyph("┉", "-").repeat(printer.size.x));
         });
 
         let elapsed = self.spotify.get_current_progress();
@@ -206,7 +207,7 @@ impl View for StatusBar {
                     .checked_mul(printer.size.x as u32)
                     .and_then(|v| v.checked_div(t.duration()))
                     .unwrap_or(0) as usize;
-                printer.print((0, 0), &"━".repeat(duration_width + 1));
+                printer.print((0, 0), &glyph("━", "=").repeat(duration_width + 1));
             });
         }
     }

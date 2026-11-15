@@ -10,6 +10,7 @@ use std::{
 use std::{net::Shutdown, os::unix::net::UnixStream};
 use unicode_width::UnicodeWidthChar;
 
+pub mod winstart;
 pub mod theme;
 pub mod background;
 pub mod braille;
@@ -117,7 +118,6 @@ pub fn lookup(track: &Track) -> Result<Option<Record>> {
         if until > now() { return Err("LRCLIB está limitando consultas. Probá en unos segundos.".into()); }
     }
     let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(15))
-        .tls_connector(std::sync::Arc::new(native_tls::TlsConnector::new()?))
         .user_agent("SpotiLyrics/0.1 (ncspot helper; https://github.com/hrkfdn/ncspot)").build();
     let record = match agent.get(&format!("https://lrclib.net/api/get?{query}")).call() {
         Ok(response) => Some(serde_json::from_reader(response.into_reader().take(2_000_000))?),

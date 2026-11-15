@@ -55,7 +55,7 @@ Necesitás **Spotify Premium**. Todas las versiones están en [Releases](https:/
 curl -fsSL https://github.com/nicolaschiabrandozanotti/Spotan/releases/latest/download/spoti-linux-x86_64.tar.gz | tar xz && ./spoti-linux-x86_64/install.sh
 ```
 
-Después abrilo con `spoti` o desde el menú de aplicaciones. La instalación es por usuario, **sin sudo**: copia todo a `~/.local`, agrega una entrada de escritorio e instala la fuente JetBrains Mono Nerd Font. Probado en Ubuntu 22.04/24.04, Debian 12, Fedora y Arch (glibc ≥ 2.34). Solo necesita PulseAudio o PipeWire, cairo y xkbcommon, que vienen con cualquier escritorio; OpenSSL va incluido. Para desinstalar: `./spoti-linux-x86_64/uninstall.sh`.
+Después abrilo con `spoti` o desde el menú de aplicaciones. La instalación es por usuario, **sin sudo**: copia todo a `~/.local`, agrega una entrada de escritorio e instala la fuente JetBrains Mono Nerd Font. Probado en Ubuntu 22.04/24.04, Debian 12, Fedora y Arch (glibc ≥ 2.34). Solo necesita PulseAudio o PipeWire, cairo y xkbcommon, que vienen con cualquier escritorio. Para desinstalar: `./spoti-linux-x86_64/uninstall.sh`.
 
 ### Windows 10/11 (x64) — un comando en PowerShell
 

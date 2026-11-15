@@ -11,7 +11,7 @@ pub struct Background {
 
 impl Default for Background {
     fn default() -> Self {
-        Self { enabled: true, raster: Raster::default() }
+        Self { enabled: !crate::winstart::safe_glyphs(), raster: Raster::default() }
     }
 }
 

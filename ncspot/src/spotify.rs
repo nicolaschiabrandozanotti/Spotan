@@ -160,6 +160,14 @@ impl Spotify {
             client_id: SPOTIFY_CLIENT_ID.to_string(),
             ..Default::default()
         };
+        // Streamed tracks go to a temp file; /tmp is often tmpfs, which pins ~10 MB per track in RAM.
+        // Crash leftovers are cleared once per process, never on reconnect while a track streams.
+        static CLEAN_TMP: std::sync::Once = std::sync::Once::new();
+        let tmp_dir = config::cache_path("librespot").join("tmp");
+        CLEAN_TMP.call_once(|| drop(std::fs::remove_dir_all(&tmp_dir)));
+        if std::fs::create_dir_all(&tmp_dir).is_ok() {
+            session_config.tmp_dir = tmp_dir;
+        }
         match cfg
             .values()
             .proxy

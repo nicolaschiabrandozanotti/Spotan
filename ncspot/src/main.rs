@@ -50,8 +50,10 @@ fn main() -> Result<(), String> {
     if std::env::var_os("TOKIO_WORKER_THREADS").is_none() {
         // SAFETY: this is the single-threaded entry point, before any worker,
         // graphical backend, authentication or network client is started.
-        unsafe { std::env::set_var("TOKIO_WORKER_THREADS", "2") };
+        unsafe { std::env::set_var("TOKIO_WORKER_THREADS", "1") };
     }
+    #[cfg(all(windows, feature = "panels"))]
+    spoti_tools::winstart::init();
     memory::configure();
     // Set a custom backtrace hook that writes the backtrace to a file instead of stdout, since
     // stdout is most likely in use by Cursive.

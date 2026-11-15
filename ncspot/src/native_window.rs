@@ -256,6 +256,7 @@ impl Backend for NativeBackend {
             log::error!("Wayland: {error}");
             return Some(close_event());
         }
+        self.state.borrow_mut().release_hidden();
         self.state.borrow_mut().events.pop_front()
     }
     fn set_title(&mut self, _title: String) {}
@@ -385,6 +386,24 @@ impl State {
         self.glyphs.clear();
         self.dirty = true;
         self.events.push_back(Event::WindowResize);
+    }
+    /// No frame callback for a while means the compositor is not showing the window
+    /// (minimized / other workspace). Free the SHM pool once the compositor released every
+    /// buffer (it keeps the last contents); `draw` recreates it lazily, repainting in full.
+    fn release_hidden(&mut self) {
+        if self.frame_ready.get()
+            || self.buffers.is_empty()
+            || self.frame_submitted.elapsed() < Duration::from_secs(3)
+        {
+            return;
+        }
+        let pool = &mut self.pool;
+        if self.buffers.iter().all(|frame| pool.canvas(&frame.buffer).is_some()) {
+            if let Ok(small) = SlotPool::new(4096, &self.shm) {
+                self.buffers.clear();
+                self.pool = small;
+            }
+        }
     }
     fn draw(&mut self, qh: &QueueHandle<Self>) -> Result<(), Box<dyn std::error::Error>> {
         if !self.configured || !self.frame_ready.get() || !self.dirty {

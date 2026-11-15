@@ -83,7 +83,6 @@ impl Worker {
     }
 
     pub async fn run_loop(&mut self) {
-        let mut ui_refresh = time::interval(Duration::from_millis(400));
         let mut reconnect: Option<BoxFuture<'static, Result<Session, librespot_core::Error>>> =
             None;
         let mut failed_attempts = 0;
@@ -283,12 +282,6 @@ impl Worker {
                         warn!("Librespot player event channel died, terminating worker");
                         break
                     },
-                },
-                // Update animated parts of the UI (e.g. statusbar during playback).
-                _ = ui_refresh.tick() => {
-                    if !matches!(self.player_status, PlayerStatus::Stopped) {
-                        self.events.trigger();
-                    }
                 },
             }
         }

@@ -54,12 +54,12 @@ pub fn layout(
             ("Leer↑", Action::ScrollUp, false),
             ("Leer↓", Action::ScrollDown, false),
             (
-                if follow { "Auto ✓" } else { "Seguir" },
+                if follow { crate::winstart::glyph("Auto ✓", "Auto *") } else { "Seguir" },
                 Action::Follow,
                 follow,
             ),
             (
-                if background { "Fondo ✓" } else { "Fondo" },
+                if background { crate::winstart::glyph("Fondo ✓", "Fondo *") } else { "Fondo" },
                 Action::Background,
                 background,
             ),

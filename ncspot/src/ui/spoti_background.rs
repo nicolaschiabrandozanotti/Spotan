@@ -14,7 +14,7 @@ pub struct Background {
 }
 
 impl Default for Background {
-    fn default() -> Self {Self {enabled:true,raster:Mutex::new(braille::Raster::default()),last_cells:Mutex::new(Vec::new())}}
+    fn default() -> Self {Self {enabled:!spoti_tools::winstart::safe_glyphs(),raster:Mutex::new(braille::Raster::default()),last_cells:Mutex::new(Vec::new())}}
 }
 
 fn blend(background: Color, accent: Color, amount: f64) -> Color {

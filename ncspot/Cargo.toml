@@ -65,9 +65,9 @@ futures = "0.3"
 image = {version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true}
 ioctl-rs = {version = "0.2", optional = true}
 libc = "0.2.186"
-librespot-core = "0.8.0"
-librespot-oauth = "0.8.0"
-librespot-playback = {version = "0.8.0", default-features = false, features = ["native-tls"]}
+librespot-core = {version = "0.8.0", default-features = false, features = ["rustls-tls-native-roots"]}
+librespot-oauth = {version = "0.8.0", default-features = false, features = ["rustls-tls-native-roots"]}
+librespot-playback = {version = "0.8.0", default-features = false, features = ["rustls-tls-native-roots"]}
 librespot-protocol = "0.8.0"
 log = "0.4.32"
 pancurses = {version = "0.17.0", optional = true}
@@ -76,7 +76,7 @@ platform-dirs = "0.3.0"
 rand = "0.10"
 regex = "1"
 # Share OAuth's HTTP client and the system TLS backend for cover downloads.
-reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "socks", "native-tls-alpn", "http2", "system-proxy"]}
+reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "socks", "rustls-tls-native-roots", "http2", "system-proxy"]}
 serde = "1.0"
 serde_cbor = "0.11.2"
 serde_json = "1.0"
@@ -96,7 +96,7 @@ signal-hook = "0.4.4"
 
 [dependencies.rspotify]
 default-features = false
-features = ["client-ureq", "ureq-native-tls"]
+features = ["client-ureq", "ureq-rustls-tls-native-certs"]
 version = "0.16.1"
 
 [dependencies.cursive]

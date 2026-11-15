@@ -38,11 +38,17 @@ el renderizador sin abrir ninguna sesión de Spotify ni modificar la reproducci�
 ## Ajustes de memoria
 
 ncspot usa dos trabajadores asíncronos de red en lugar de uno por CPU. También
-limita a dos, por defecto, los trabajadores del runtime interno de librespot;
+limita a uno, por defecto, los trabajadores del runtime interno de librespot;
 un valor explícito de `TOKIO_WORKER_THREADS` tiene prioridad. Se configura al
 principio de `main`, antes de crear hilos, y solo afecta al entorno del proceso.
 En Linux con glibc limita el asignador a dos arenas y devuelve páginas libres
 cada quince segundos. No cambia el bitrate, la calidad, la biblioteca ni la caché de audio.
+
+El tema en streaming se guarda en `~/.cache/ncspot/librespot/tmp` y no en `/tmp`:
+en Debian `/tmp` es tmpfs y retenía en RAM unos 10 MB por tema (20 MB durante la
+precarga gapless), fuera del PSS del proceso. Los restos de un cierre forzado se
+borran al arrancar. El tema del panel solo se vuelve a leer si cambia el archivo
+de configuración, y se quitó un refresco de 400 ms redundante con los 8 FPS.
 
 La prueba del runtime redujo los hilos estables de 18 a 8 en esta máquina.
 Con el mismo binario, tema, fragmento y ventana, las medianas de RAM fueron
@@ -52,7 +58,7 @@ la transición automática al siguiente tema. `runtime-results.md` documenta la
 comparación y cómo usar un valor explícito para volver a probar el ajuste anterior.
 
 Las descargas de carátulas comparten ahora `reqwest 0.12.28` con OAuth, usando
-TLS del sistema, HTTP/2 y soporte de proxies. Se retiraron `reqwest 0.13` y
+TLS, HTTP/2 y soporte de proxies. Se retiraron `reqwest 0.13` y
 AWS-LC; las letras mantienen `ureq` con rustls/ring. No se modificaron los modelos
 de biblioteca, el motor de audio ni Athena. En la misma prueba de reproducción,
 el reproductor pasó de 30,1 a 28,4 MiB y el ejecutable de 15,9 a 14,0 MiB.
@@ -101,10 +107,16 @@ Los contadores de asignaciones se compilan solamente en los ejemplos y las prueb
 
 ## TLS y estado del panel de letras
 
-Las consultas a LRCLIB usan `ureq` con `native-tls` y el almacén de certificados
-del sistema (TLS 1.2 como mínimo). El reproductor comparte este backend con
-sus otras conexiones; el grafo activo ya no incluye rustls, ring ni aws-lc.
-La validación de certificados y nombres de host sigue activada.
+Todas las conexiones (librespot, OAuth, API web, carátulas y LRCLIB) usan rustls
+con el proveedor ring y los certificados raíz del sistema (TLS 1.2 como mínimo).
+No se enlaza OpenSSL ni aws-lc: el ejecutable no depende de la versión de
+libssl de cada distro. Frente a OpenSSL del sistema, el reproductor bajó de
+26,7 a 21,5 MiB sonando, con la misma CPU. La validación de certificados y
+nombres de host sigue activada.
+
+Cuando el compositor deja de pedir cuadros (ventana minimizada o en otro
+escritorio) durante 3 s y ya devolvió todos los buffers, la ventana nativa
+libera su pool de memoria compartida; el próximo dibujo lo recrea completo.
 
 El panel toma prestados los campos necesarios de la cola y conserva su estado
 entre cuadros. No clona el `Playable` completo ni lo convierte a JSON en cada

@@ -140,3 +140,14 @@ mod download_tests {
         spoti_tools::lookup(&track).expect("HTTPS lyrics lookup");
     }
 }
+
+/// `fancy` glyph, or ASCII `plain` on Windows consoles that lack the glyph (outside Windows Terminal).
+pub fn glyph(fancy: &'static str, plain: &'static str) -> &'static str {
+    #[cfg(feature = "panels")]
+    return spoti_tools::winstart::glyph(fancy, plain);
+    #[cfg(not(feature = "panels"))]
+    {
+        let _ = plain;
+        fancy
+    }
+}
