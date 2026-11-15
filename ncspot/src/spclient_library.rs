@@ -199,15 +199,24 @@ async fn fetch_episodes(sp: &librespot_core::spclient::SpClient, uris: &[String]
     fetch_metadata(sp, ExtensionKind::EPISODE_V4, "spotify:episode:", |m: &metadata::Episode| m.gid(), uris).await
 }
 
-/// Sólo desde hilos std, nunca desde dentro del runtime tokio (`block_on` entraría en pánico).
-fn runtime() -> &'static tokio::runtime::Runtime {
-    ASYNC_RUNTIME.get().unwrap()
+/// Bloquea hasta que termine `fut`. Seguro desde hilos std y desde dentro del runtime tokio
+/// (multi-hilo): en ese caso usa `block_in_place`, que evita el pánico de `block_on`.
+fn block_on_in<F: std::future::Future>(rt: &tokio::runtime::Runtime, fut: F) -> F::Output {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(|| rt.block_on(fut))
+    } else {
+        rt.block_on(fut)
+    }
 }
 
-/// Me gusta, en el orden de Spotify. Reutiliza los `Track` de `cached` por id. Bloqueante: sólo desde hilos std.
+fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+    block_on_in(ASYNC_RUNTIME.get().unwrap(), fut)
+}
+
+/// Me gusta, en el orden de Spotify. Reutiliza los `Track` de `cached` por id. Bloqueante (ver `block_on_in`).
 pub fn liked_tracks(spotify: &Spotify, cached: &[Track]) -> Result<Vec<Track>, ()> {
     let session = spotify.session().ok_or(())?;
-    runtime().block_on(async {
+    block_on(async {
         let sp = session.spclient();
         let ctx = sp
             .get_context(&format!("spotify:user:{}:collection", session.username()))
@@ -259,21 +268,21 @@ pub fn liked_tracks(spotify: &Spotify, cached: &[Track]) -> Result<Vec<Track>, (
     })
 }
 
-/// Playlists del usuario (sin sus pistas) desde la rootlist. Bloqueante: sólo desde hilos std.
+/// Playlists del usuario (sin sus pistas) desde la rootlist. Bloqueante (ver `block_on_in`).
 pub fn playlists(spotify: &Spotify) -> Result<Vec<Playlist>, ()> {
     let session = spotify.session().ok_or(())?;
-    runtime().block_on(async {
+    block_on(async {
         let bytes = session.spclient().get_rootlist(0, Some(1000)).await.map_err(|e| warn!("rootlist: {e}"))?;
         let content = SelectedListContent::parse_from_bytes(&bytes).map_err(|e| warn!("rootlist: {e}"))?;
         Ok(playlists_from_content(&content))
     })
 }
 
-/// Ítems de la playlist `id` (base62) en orden, con metadata en lote. Bloqueante: sólo desde hilos std.
+/// Ítems de la playlist `id` (base62) en orden, con metadata en lote. Bloqueante (ver `block_on_in`).
 pub fn playlist_items(spotify: &Spotify, id: &str) -> Result<Vec<Playable>, ()> {
     let session = spotify.session().ok_or(())?;
     let id = SpotifyId::from_base62(id).map_err(|_| ())?;
-    runtime().block_on(async {
+    block_on(async {
         let sp = session.spclient();
         let bytes = sp.get_playlist(&id).await.map_err(|e| warn!("playlist: {e}"))?;
         let content = SelectedListContent::parse_from_bytes(&bytes).map_err(|e| warn!("playlist: {e}"))?;
@@ -293,6 +302,17 @@ pub fn playlist_items(spotify: &Spotify, id: &str) -> Result<Vec<Playable>, ()> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn block_on_works_inside_the_runtime() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .build()
+            .unwrap();
+        let out = rt.block_on(async { block_on_in(&rt, async { 7 }) });
+        assert_eq!(out, 7);
+        assert_eq!(block_on_in(&rt, async { 8 }), 8);
+    }
+
     use super::*;
     use librespot_protocol::metadata;
     use librespot_protocol::playlist4_external::{Item, ListAttributes, MetaItem, SelectedListContent};

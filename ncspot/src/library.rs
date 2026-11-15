@@ -525,11 +525,13 @@ impl Library {
     /// # Returns
     ///
     /// `false` if the cache doesn't need saving.
-    fn fetch_tracks(&self, _refetch_unchanged: bool) -> bool {
+    fn fetch_tracks(&self, refetch_unchanged: bool) -> bool {
         let cached = self.tracks.read().unwrap().clone();
+        // `:update` refetches the metadata too, so don't reuse cached tracks
+        let reusable: &[Track] = if refetch_unchanged { &[] } else { &cached };
         match liked_result(
             &cached,
-            spclient_library::liked_tracks(&self.spotify, &cached),
+            spclient_library::liked_tracks(&self.spotify, reusable),
         ) {
             Some(tracks) => {
                 *self.tracks.write().unwrap() = tracks;
