@@ -2665,6 +2665,7 @@ dependencies = [
  "parking_lot",
  "parse_duration",
  "platform-dirs",
+ "protobuf",
  "rand 0.10.3",
  "regex",
  "reqwest",

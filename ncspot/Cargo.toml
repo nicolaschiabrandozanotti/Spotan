@@ -69,6 +69,7 @@ librespot-core = {version = "0.8.0", default-features = false, features = ["rust
 librespot-oauth = {version = "0.8.0", default-features = false, features = ["rustls-tls-native-roots"]}
 librespot-playback = {version = "0.8.0", default-features = false, features = ["rustls-tls-native-roots"]}
 librespot-protocol = "0.8.0"
+protobuf = "3.7.2"
 log = "0.4.32"
 pancurses = {version = "0.17.0", optional = true}
 parse_duration = "2.1.1"

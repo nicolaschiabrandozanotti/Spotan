@@ -31,6 +31,8 @@ mod serialization;
 mod sharing;
 mod spotify;
 mod spotify_api;
+#[allow(dead_code)] // usado desde library.rs en la tarea 3
+mod spclient_library;
 mod spotify_url;
 mod spotify_worker;
 mod theme;
