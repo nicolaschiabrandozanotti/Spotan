@@ -18,6 +18,7 @@ use crate::model::playable::Playable;
 use crate::model::playlist::Playlist;
 use crate::model::show::Show;
 use crate::model::track::Track;
+use crate::spclient_library;
 use crate::spotify::Spotify;
 
 /// Cached tracks database filename.
@@ -375,38 +376,25 @@ impl Library {
             .map(|p| p.id.clone())
             .collect();
         let mut list_order: HashMap<String, usize> = HashMap::new();
-        let rate_limit_failures = self.spotify.api.rate_limit_failures();
 
-        let lists_page = self.spotify.api.current_user_playlist();
-        let mut lists_batch = Some(lists_page.items.read().unwrap().clone());
-        while let Some(lists) = lists_batch {
-            for (index, remote) in lists.iter().enumerate() {
-                list_order.insert(remote.id.clone(), list_order.len());
-                if !self.needs_download(remote) {
-                    continue;
-                }
-
-                let mut playlist: Playlist = remote.clone();
-                playlist.tracks = None;
-                // once rate limited, load the rest on the next update
-                if self.spotify.api.rate_limit_failures() != rate_limit_failures {
-                    if !cached.contains(&playlist.id) {
-                        self.append_or_update(playlist, false);
-                    }
-                    continue;
-                }
-
-                info!("updating playlist {} (index: {})", remote.name, index);
-                playlist.load_tracks(&self.spotify);
-                self.append_or_update(playlist, false);
-                // trigger redraw
-                self.trigger_redraw();
+        let remote_lists = spclient_library::playlists(&self.spotify);
+        for (index, remote) in remote_lists.iter().flatten().enumerate() {
+            list_order.insert(remote.id.clone(), list_order.len());
+            if !self.needs_download(remote) {
+                continue;
             }
-            lists_batch = lists_page.next();
+
+            let mut playlist: Playlist = remote.clone();
+            playlist.tracks = None;
+            info!("updating playlist {} (index: {})", remote.name, index);
+            playlist.load_tracks(&self.spotify);
+            self.append_or_update(playlist, false);
+            // trigger redraw
+            self.trigger_redraw();
         }
 
         // only a complete listing shows which playlists were removed
-        if lists_page.is_complete() {
+        if remote_lists.is_ok() {
             self.playlists.write().unwrap().retain(|p| {
                 let removed = cached.contains(&p.id) && !list_order.contains_key(&p.id);
                 if removed {
@@ -537,44 +525,18 @@ impl Library {
     /// # Returns
     ///
     /// `false` if the cache doesn't need saving.
-    fn fetch_tracks(&self, refetch_unchanged: bool) -> bool {
-        let mut tracks = Vec::new();
-        let mut i = 0u32;
-
-        loop {
-            let page = self
-                .spotify
-                .api
-                .current_user_saved_tracks(tracks.len() as u32);
-
-            debug!("tracks page: {i}");
-            i += 1;
-
-            if page.is_err() {
-                error!("Failed to fetch tracks.");
-                // Save anyway, so a cache from an older version is replaced.
-                return true;
+    fn fetch_tracks(&self, _refetch_unchanged: bool) -> bool {
+        let cached = self.tracks.read().unwrap().clone();
+        match liked_result(
+            &cached,
+            spclient_library::liked_tracks(&self.spotify, &cached),
+        ) {
+            Some(tracks) => {
+                *self.tracks.write().unwrap() = tracks;
+                true
             }
-            let page = page.unwrap();
-            let items: Vec<Track> = page.items.iter().map(|t| t.into()).collect();
-
-            if !refetch_unchanged
-                && page.offset == 0
-                && tracks_unchanged(page.total, &items, &self.tracks.read().unwrap())
-            {
-                // Keep the cache and skip the other pages.
-                return false;
-            }
-
-            tracks.extend(items);
-
-            if page.next.is_none() {
-                break;
-            }
+            None => false,
         }
-
-        *self.tracks.write().unwrap() = tracks;
-        true
     }
 
     fn populate_artists(&self) {
@@ -981,32 +943,18 @@ impl Library {
     }
 }
 
-/// Check whether the cached liked songs are still up to date, using only the first page.
-///
-/// Spotify lists liked songs newest first, so a new like shows up at the top of the first page,
-/// and an unlike lowers the `total`. If the first page and the total both match the cache, the
-/// cache is kept and the other pages aren't fetched.
-///
-/// A change made in another app is missed only if both still match afterwards. For example, one
-/// song is liked and another unliked, then the 50 newest songs are unliked and liked again in
-/// their old order. Comparing `added_at` would catch it, but songs liked in ncspot have none, so
-/// each of those likes would refetch every page, even though the cache is already up to date.
-/// Fixed by `:update` or any later like or unlike in another app, once the library next loads.
-///
-/// An empty cache never counts as up to date. It may be empty because an older version wrote the
-/// file, so it wasn't loaded, and the file still needs replacing.
-fn tracks_unchanged(total: u32, first_page: &[Track], cached: &[Track]) -> bool {
-    !cached.is_empty()
-        && total as usize == cached.len()
-        && first_page
-            .iter()
-            .zip(cached)
-            .all(|(new, old)| new.id == old.id)
+/// `Some(new)` if the liked songs fetched from the internal channel differ from the cache (ids or
+/// order). `None` keeps the cache: either the fetch failed or nothing changed.
+fn liked_result(cached: &[Track], fetched: Result<Vec<Track>, ()>) -> Option<Vec<Track>> {
+    let fetched = fetched.ok()?;
+    let same =
+        fetched.len() == cached.len() && fetched.iter().zip(cached).all(|(a, b)| a.id == b.id);
+    (!same).then_some(fetched)
 }
 
 /// Check whether the cached saved albums are still up to date, using only the first page.
 ///
-/// This works like [tracks_unchanged], but saved albums are cached sorted by artist, so instead of
+/// Saved albums are cached sorted by artist, so instead of
 /// comparing the order, check that every album on the first page is cached.
 ///
 /// Albums saved in ncspot can lack data the API gives (such as their tracks) and have no
@@ -1095,39 +1043,20 @@ mod tests {
     }
 
     #[test]
-    fn tracks_with_same_total_and_first_page_are_unchanged() {
-        assert!(tracks_unchanged(
-            3,
-            &tracks(&["c", "b"]),
-            &tracks(&["c", "b", "a"])
-        ));
+    fn liked_error_keeps_cache() {
+        assert!(liked_result(&tracks(&["a", "b"]), Err(())).is_none());
     }
 
     #[test]
-    fn track_removal_changes_the_total() {
-        assert!(!tracks_unchanged(
-            2,
-            &tracks(&["c", "b"]),
-            &tracks(&["c", "b", "a"])
-        ));
+    fn liked_same_ids_keeps_cache() {
+        assert!(liked_result(&tracks(&["a", "b"]), Ok(tracks(&["a", "b"]))).is_none());
     }
 
     #[test]
-    fn track_addition_shows_in_the_first_page() {
-        assert!(!tracks_unchanged(
-            3,
-            &tracks(&["d", "c"]),
-            &tracks(&["c", "b", "a"])
-        ));
-    }
-
-    #[test]
-    fn track_saved_again_moves_to_the_top() {
-        assert!(!tracks_unchanged(
-            3,
-            &tracks(&["a", "c"]),
-            &tracks(&["c", "b", "a"])
-        ));
+    fn liked_different_order_or_ids_replace_cache() {
+        assert!(liked_result(&tracks(&["a", "b"]), Ok(tracks(&["b", "a"]))).is_some());
+        assert!(liked_result(&tracks(&["a", "b"]), Ok(tracks(&["c", "a", "b"]))).is_some());
+        assert!(liked_result(&[], Ok(Vec::new())).is_none());
     }
 
     #[test]
@@ -1166,7 +1095,6 @@ mod tests {
 
     #[test]
     fn empty_cache_is_never_unchanged() {
-        assert!(!tracks_unchanged(0, &[], &[]));
         assert!(!albums_unchanged(0, &[], &[]));
     }
 

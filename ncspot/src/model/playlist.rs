@@ -50,7 +50,7 @@ impl Playlist {
 
     /// All tracks, or `None` if a page failed, leaving them unloaded for a later retry.
     fn get_all_tracks(&self, spotify: &Spotify) -> Option<Vec<Playable>> {
-        let tracks = spotify.api.user_playlist_tracks(&self.id).fetch_all();
+        let tracks = crate::spclient_library::playlist_items(spotify, &self.id).ok();
         if tracks.is_none() {
             warn!("Failed to load the tracks of playlist {}", self.name);
         }
