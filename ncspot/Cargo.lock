@@ -2666,6 +2666,7 @@ dependencies = [
  "parse_duration",
  "platform-dirs",
  "protobuf",
+ "protobuf-json-mapping",
  "rand 0.10.3",
  "regex",
  "reqwest",

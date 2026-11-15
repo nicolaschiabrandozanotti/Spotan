@@ -532,6 +532,7 @@ impl Library {
         match liked_result(
             &cached,
             spclient_library::liked_tracks(&self.spotify, reusable),
+            refetch_unchanged,
         ) {
             Some(tracks) => {
                 *self.tracks.write().unwrap() = tracks;
@@ -945,12 +946,20 @@ impl Library {
     }
 }
 
-/// `Some(new)` if the liked songs fetched from the internal channel differ from the cache (ids or
-/// order). `None` keeps the cache: either the fetch failed or nothing changed.
-fn liked_result(cached: &[Track], fetched: Result<Vec<Track>, ()>) -> Option<Vec<Track>> {
+/// `Some(new)` if the liked songs fetched from the internal channel differ from the cache (ids,
+/// order or `added_at`) or `refetch_unchanged` is set. `None` keeps the cache: either the fetch failed or nothing changed.
+fn liked_result(
+    cached: &[Track],
+    fetched: Result<Vec<Track>, ()>,
+    refetch_unchanged: bool,
+) -> Option<Vec<Track>> {
     let fetched = fetched.ok()?;
-    let same =
-        fetched.len() == cached.len() && fetched.iter().zip(cached).all(|(a, b)| a.id == b.id);
+    let same = !refetch_unchanged
+        && fetched.len() == cached.len()
+        && fetched
+            .iter()
+            .zip(cached)
+            .all(|(a, b)| a.id == b.id && a.added_at == b.added_at);
     (!same).then_some(fetched)
 }
 
@@ -1046,19 +1055,31 @@ mod tests {
 
     #[test]
     fn liked_error_keeps_cache() {
-        assert!(liked_result(&tracks(&["a", "b"]), Err(())).is_none());
+        assert!(liked_result(&tracks(&["a", "b"]), Err(()), false).is_none());
     }
 
     #[test]
     fn liked_same_ids_keeps_cache() {
-        assert!(liked_result(&tracks(&["a", "b"]), Ok(tracks(&["a", "b"]))).is_none());
+        assert!(liked_result(&tracks(&["a", "b"]), Ok(tracks(&["a", "b"])), false).is_none());
     }
 
     #[test]
     fn liked_different_order_or_ids_replace_cache() {
-        assert!(liked_result(&tracks(&["a", "b"]), Ok(tracks(&["b", "a"]))).is_some());
-        assert!(liked_result(&tracks(&["a", "b"]), Ok(tracks(&["c", "a", "b"]))).is_some());
-        assert!(liked_result(&[], Ok(Vec::new())).is_none());
+        assert!(liked_result(&tracks(&["a", "b"]), Ok(tracks(&["b", "a"])), false).is_some());
+        assert!(liked_result(&tracks(&["a", "b"]), Ok(tracks(&["c", "a", "b"])), false).is_some());
+        assert!(liked_result(&[], Ok(Vec::new()), false).is_none());
+    }
+
+    #[test]
+    fn liked_refetch_flag_replaces_cache_even_if_same() {
+        assert!(liked_result(&tracks(&["a"]), Ok(tracks(&["a"])), true).is_some());
+    }
+
+    #[test]
+    fn liked_added_at_difference_replaces_cache() {
+        let mut fresh = tracks(&["a"]);
+        fresh[0].added_at = Some(chrono::DateTime::from_timestamp(1, 0).unwrap());
+        assert!(liked_result(&tracks(&["a"]), Ok(fresh), false).is_some());
     }
 
     #[test]

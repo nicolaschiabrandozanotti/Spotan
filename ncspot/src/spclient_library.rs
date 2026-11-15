@@ -10,6 +10,7 @@ use librespot_protocol::extended_metadata::{BatchedEntityRequest, EntityRequest,
 use librespot_protocol::extension_kind::ExtensionKind;
 use librespot_protocol::metadata;
 use librespot_protocol::playlist4_external::{MetaItem, SelectedListContent};
+use librespot_protocol::context_page::ContextPage;
 use log::warn;
 use protobuf::{EnumOrUnknown, Message};
 
@@ -41,11 +42,34 @@ fn parse_added_at(ms: Option<&str>) -> Option<DateTime<Utc>> {
 }
 
 /// (uri, fecha en que se dio me gusta) de cada pista de una página de contexto.
-fn page_tracks(page: &librespot_protocol::context_page::ContextPage) -> Vec<(String, Option<DateTime<Utc>>)> {
+fn page_tracks(page: &ContextPage) -> Vec<(String, Option<DateTime<Utc>>)> {
     page.tracks
         .iter()
         .map(|t| (t.uri().to_string(), parse_added_at(t.metadata.get("added_at").map(String::as_str))))
         .collect()
+}
+
+/// Página de "me gusta" siguiente (JSON, snake_case o camelCase): sus pistas y la URL de la
+/// siguiente. `Err` si no parsea o no trae pistas (así no se pisa la caché).
+fn parse_followed_page(body: &[u8]) -> Result<(Vec<(String, Option<DateTime<Utc>>)>, String), ()> {
+    let text = std::str::from_utf8(body).map_err(|_| ())?;
+    let opts = protobuf_json_mapping::ParseOptions { ignore_unknown_fields: true, ..Default::default() };
+    let page: ContextPage = protobuf_json_mapping::parse_from_str_with_options(text, &opts).map_err(|e| warn!("me gusta (página): {e}"))?;
+    let tracks = page_tracks(&page);
+    if tracks.is_empty() {
+        warn!("me gusta: página sin pistas");
+        return Err(());
+    }
+    Ok((tracks, page.next_page_url().to_string()))
+}
+
+/// `Err` si la respuesta es vacía (sin `revision`): un cuerpo vacío parsea como contenido vacío.
+fn non_empty(content: SelectedListContent, what: &str) -> Result<SelectedListContent, ()> {
+    if content.revision().is_empty() {
+        warn!("{what}: respuesta vacía");
+        return Err(());
+    }
+    Ok(content)
 }
 
 fn cover(group: &metadata::ImageGroup) -> Option<String> {
@@ -158,10 +182,12 @@ async fn fetch_metadata<M: Message>(
     uris: &[String],
 ) -> Result<HashMap<String, M>, ()> {
     let mut out = HashMap::new();
-    let mut add = |value: &[u8]| {
+    // Clave: `entity_uri` de la respuesta (o el gid reconstruido si viene vacío).
+    let mut add = |entity_uri: &str, value: &[u8]| {
         if let Ok(m) = M::parse_from_bytes(value) {
             if let Some(id) = b62(gid_of(&m)) {
-                out.insert(format!("{prefix}{id}"), m);
+                let key = if entity_uri.is_empty() { format!("{prefix}{id}") } else { entity_uri.to_string() };
+                out.insert(key, m);
             }
         }
     };
@@ -182,8 +208,8 @@ async fn fetch_metadata<M: Message>(
                 .extended_metadata
                 .iter()
                 .flat_map(|arr| arr.extension_data.iter())
-                .filter_map(|d| d.extension_data.as_ref())
-                .for_each(|any| add(&any.value)),
+                .filter_map(|d| Some((d.entity_uri.as_str(), d.extension_data.as_ref()?)))
+                .for_each(|(uri, any)| add(uri, &any.value)),
             Err(e) => {
                 warn!("metadata en lote falló ({e}); pidiendo de a uno");
                 let singles: Vec<_> = futures::stream::iter(batch.iter().filter_map(|u| SpotifyUri::from_uri(u).ok()))
@@ -192,7 +218,11 @@ async fn fetch_metadata<M: Message>(
                     .collect()
                     .await;
                 all_ok(&singles)?;
-                singles.iter().flatten().for_each(|b| add(b));
+                for (u, b) in batch.iter().filter(|u| SpotifyUri::from_uri(u).is_ok()).zip(&singles) {
+                    if let Ok(b) = b {
+                        add(u, b);
+                    }
+                }
             }
         }
     }
@@ -251,13 +281,9 @@ pub fn liked_tracks(spotify: &Spotify, cached: &[Track]) -> Result<Vec<Track>, (
                     return Err(());
                 }
                 let body = sp.get_next_page(&next).await.map_err(|e| warn!("me gusta (página): {e}"))?;
-                let json: serde_json::Value = serde_json::from_slice(&body).map_err(|_| ())?;
-                let found = json["tracks"].as_array().into_iter().flatten().filter_map(|t| {
-                    let added = parse_added_at(t["metadata"]["added_at"].as_str());
-                    Some((t["uri"].as_str()?.to_string(), added))
-                });
+                let (found, n) = parse_followed_page(&body)?;
                 uris.extend(found);
-                next = json["next_page_url"].as_str().unwrap_or_default().to_string();
+                next = n;
             }
         }
         let mut seen = std::collections::HashSet::new();
@@ -295,6 +321,7 @@ pub fn playlists(spotify: &Spotify) -> Result<Vec<Playlist>, ()> {
     block_on(async {
         let bytes = session.spclient().get_rootlist(0, Some(1000)).await.map_err(|e| warn!("rootlist: {e}"))?;
         let content = SelectedListContent::parse_from_bytes(&bytes).map_err(|e| warn!("rootlist: {e}"))?;
+        let content = non_empty(content, "rootlist")?;
         Ok(playlists_from_content(&content))
     })
 }
@@ -307,6 +334,10 @@ pub fn playlist_items(spotify: &Spotify, id: &str) -> Result<Vec<Playable>, ()> 
         let sp = session.spclient();
         let bytes = sp.get_playlist(&id).await.map_err(|e| warn!("playlist: {e}"))?;
         let content = SelectedListContent::parse_from_bytes(&bytes).map_err(|e| warn!("playlist: {e}"))?;
+        let content = non_empty(content, "playlist")?;
+        if content.contents.truncated() {
+            warn!("playlist {id:?}: contenido truncado; pueden faltar pistas");
+        }
         let uris: Vec<(String, Option<DateTime<Utc>>)> = content
             .contents
             .items
@@ -345,6 +376,30 @@ mod tests {
         assert_eq!(got[0].1.unwrap().to_rfc3339(), "2026-09-26T02:34:05+00:00");
         assert_eq!(got[1].1, None);
         assert_eq!(got[2].1, None);
+    }
+
+    #[test]
+    fn followed_page_accepts_camel_case() {
+        let json = r#"{"tracks":[{"uri":"spotify:track:abc","metadata":{"added_at":"1790390045000"}}],"nextPageUrl":"hm://next"}"#;
+        let (tracks, next) = parse_followed_page(json.as_bytes()).unwrap();
+        assert_eq!(tracks[0].0, "spotify:track:abc");
+        assert_eq!(tracks[0].1.unwrap().to_rfc3339(), "2026-09-26T02:34:05+00:00");
+        assert_eq!(next, "hm://next");
+        let snake = json.replace("nextPageUrl", "next_page_url");
+        assert_eq!(parse_followed_page(snake.as_bytes()).unwrap().1, "hm://next");
+    }
+
+    #[test]
+    fn followed_page_without_tracks_or_garbage_is_err() {
+        assert!(parse_followed_page(br#"{"nextPageUrl":"x"}"#).is_err());
+        assert!(parse_followed_page(b"no json").is_err());
+    }
+
+    #[test]
+    fn empty_response_is_err() {
+        assert!(non_empty(SelectedListContent::new(), "t").is_err());
+        let ok = SelectedListContent { revision: Some(vec![1]), ..Default::default() };
+        assert!(non_empty(ok, "t").is_ok());
     }
 
     #[test]
