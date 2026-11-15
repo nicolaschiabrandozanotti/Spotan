@@ -135,14 +135,15 @@ fn batches(uris: &[String]) -> Vec<Vec<String>> {
 }
 
 /// Metadata de `uris` (todas del mismo tipo `kind`) por `get_extended_metadata` en lotes.
-/// Si un lote falla se piden de a uno, 8 en paralelo. Devuelve gid-uri -> mensaje.
+/// Si un lote falla se piden de a uno, 8 en paralelo; `Err` si alguno de esos pedidos falla
+/// (así el llamador no pisa su caché con datos parciales). Devuelve uri -> mensaje.
 async fn fetch_metadata<M: Message>(
     spclient: &librespot_core::spclient::SpClient,
     kind: ExtensionKind,
     prefix: &str,
     gid_of: fn(&M) -> &[u8],
     uris: &[String],
-) -> HashMap<String, M> {
+) -> Result<HashMap<String, M>, ()> {
     let mut out = HashMap::new();
     let mut add = |value: &[u8]| {
         if let Ok(m) = M::parse_from_bytes(value) {
@@ -177,26 +178,33 @@ async fn fetch_metadata<M: Message>(
                     .buffered(CONCURRENT_FALLBACK)
                     .collect()
                     .await;
-                singles.iter().filter_map(|r| r.as_ref().ok()).for_each(|b| add(b));
+                all_ok(&singles)?;
+                singles.iter().flatten().for_each(|b| add(b));
             }
         }
     }
-    out
+    Ok(out)
 }
 
-async fn fetch_tracks(sp: &librespot_core::spclient::SpClient, uris: &[String]) -> HashMap<String, metadata::Track> {
+/// `Err` si algún pedido individual falló (por red/429), no si sólo faltó metadata.
+fn all_ok<T, E>(results: &[Result<T, E>]) -> Result<(), ()> {
+    results.iter().all(Result::is_ok).then_some(()).ok_or(())
+}
+
+async fn fetch_tracks(sp: &librespot_core::spclient::SpClient, uris: &[String]) -> Result<HashMap<String, metadata::Track>, ()> {
     fetch_metadata(sp, ExtensionKind::TRACK_V4, "spotify:track:", |m: &metadata::Track| m.gid(), uris).await
 }
 
-async fn fetch_episodes(sp: &librespot_core::spclient::SpClient, uris: &[String]) -> HashMap<String, metadata::Episode> {
+async fn fetch_episodes(sp: &librespot_core::spclient::SpClient, uris: &[String]) -> Result<HashMap<String, metadata::Episode>, ()> {
     fetch_metadata(sp, ExtensionKind::EPISODE_V4, "spotify:episode:", |m: &metadata::Episode| m.gid(), uris).await
 }
 
+/// Sólo desde hilos std, nunca desde dentro del runtime tokio (`block_on` entraría en pánico).
 fn runtime() -> &'static tokio::runtime::Runtime {
     ASYNC_RUNTIME.get().unwrap()
 }
 
-/// Me gusta, en el orden de Spotify. Reutiliza los `Track` de `cached` por id.
+/// Me gusta, en el orden de Spotify. Reutiliza los `Track` de `cached` por id. Bloqueante: sólo desde hilos std.
 pub fn liked_tracks(spotify: &Spotify, cached: &[Track]) -> Result<Vec<Track>, ()> {
     let session = spotify.session().ok_or(())?;
     runtime().block_on(async {
@@ -206,6 +214,7 @@ pub fn liked_tracks(spotify: &Spotify, cached: &[Track]) -> Result<Vec<Track>, (
             .await
             .map_err(|e| warn!("me gusta: {e}"))?;
         let mut uris: Vec<String> = vec![];
+        let mut visited = std::collections::HashSet::new();
         for page in &ctx.pages {
             uris.extend(page.tracks.iter().map(|t| t.uri().to_string()));
             // Página sin pistas (sólo `page_url`) o con `next_page_url`: se siguen como JSON.
@@ -215,6 +224,10 @@ pub fn liked_tracks(spotify: &Spotify, cached: &[Track]) -> Result<Vec<Track>, (
                 _ => String::new(),
             };
             while !next.is_empty() {
+                if !visited.insert(next.clone()) {
+                    warn!("me gusta: página repetida {next}");
+                    return Err(());
+                }
                 let body = sp.get_next_page(&next).await.map_err(|e| warn!("me gusta (página): {e}"))?;
                 let json: serde_json::Value = serde_json::from_slice(&body).map_err(|_| ())?;
                 let found = json["tracks"].as_array().into_iter().flatten().filter_map(|t| t["uri"].as_str());
@@ -222,13 +235,15 @@ pub fn liked_tracks(spotify: &Spotify, cached: &[Track]) -> Result<Vec<Track>, (
                 next = json["next_page_url"].as_str().unwrap_or_default().to_string();
             }
         }
+        let mut seen = std::collections::HashSet::new();
+        uris.retain(|u| seen.insert(u.clone()));
         let known: HashMap<&str, &Track> = cached.iter().filter_map(|t| Some((t.id.as_deref()?, t))).collect();
         let missing: Vec<String> = uris
             .iter()
             .filter(|u| u.starts_with("spotify:track:") && !known.contains_key(&u["spotify:track:".len()..]))
             .cloned()
             .collect();
-        let fetched = fetch_tracks(&sp, &missing).await;
+        let fetched = fetch_tracks(&sp, &missing).await?;
         Ok(uris
             .iter()
             .filter_map(|u| {
@@ -244,7 +259,7 @@ pub fn liked_tracks(spotify: &Spotify, cached: &[Track]) -> Result<Vec<Track>, (
     })
 }
 
-/// Playlists del usuario (sin sus pistas) desde la rootlist.
+/// Playlists del usuario (sin sus pistas) desde la rootlist. Bloqueante: sólo desde hilos std.
 pub fn playlists(spotify: &Spotify) -> Result<Vec<Playlist>, ()> {
     let session = spotify.session().ok_or(())?;
     runtime().block_on(async {
@@ -254,7 +269,7 @@ pub fn playlists(spotify: &Spotify) -> Result<Vec<Playlist>, ()> {
     })
 }
 
-/// Ítems de la playlist `id` (base62) en orden, con metadata en lote.
+/// Ítems de la playlist `id` (base62) en orden, con metadata en lote. Bloqueante: sólo desde hilos std.
 pub fn playlist_items(spotify: &Spotify, id: &str) -> Result<Vec<Playable>, ()> {
     let session = spotify.session().ok_or(())?;
     let id = SpotifyId::from_base62(id).map_err(|_| ())?;
@@ -271,6 +286,7 @@ pub fn playlist_items(spotify: &Spotify, id: &str) -> Result<Vec<Playable>, ()> 
         let of = |p: &str| uris.iter().filter(|(u, _)| u.starts_with(p)).map(|(u, _)| u.clone()).collect::<Vec<_>>();
         let (track_uris, episode_uris) = (of("spotify:track:"), of("spotify:episode:"));
         let (tracks, episodes) = futures::join!(fetch_tracks(&sp, &track_uris), fetch_episodes(&sp, &episode_uris));
+        let (tracks, episodes) = (tracks?, episodes?);
         Ok(order_playables(&uris, &tracks, &episodes))
     })
 }
@@ -279,7 +295,7 @@ pub fn playlist_items(spotify: &Spotify, id: &str) -> Result<Vec<Playable>, ()> 
 mod tests {
     use super::*;
     use librespot_protocol::metadata;
-    use librespot_protocol::playlist4_external::{Item, ItemAttributes, ListAttributes, MetaItem, SelectedListContent};
+    use librespot_protocol::playlist4_external::{Item, ListAttributes, MetaItem, SelectedListContent};
     use protobuf::{EnumOrUnknown, MessageField};
 
     fn gid(n: u8) -> Vec<u8> {
@@ -422,8 +438,13 @@ mod tests {
     }
 
     #[test]
+    fn all_ok_fails_on_any_request_error() {
+        assert!(all_ok::<u8, ()>(&[Ok(1), Ok(2)]).is_ok());
+        assert!(all_ok(&[Ok(1), Err(())]).is_err());
+    }
+
+    #[test]
     fn timestamp_ms_converts() {
         assert_eq!(timestamp_ms(1_700_000_000_000).unwrap().timestamp(), 1_700_000_000);
-        let _ = ItemAttributes::new();
     }
 }
