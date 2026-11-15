@@ -1,0 +1,37 @@
+[package]
+name = "spoti-tools"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Native Spoti player helpers and optional Athena integration"
+license = "MIT"
+
+[dependencies]
+spoti-control = { path = "control" }
+crossterm = "=0.28.1"
+form_urlencoded = "1.2"
+ratatui = { version = "=0.29.0", default-features = false, features = ["crossterm"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+toml = "0.8"
+unicode-width = "0.2"
+ureq = { version = "=2.12.1", default-features = false, features = ["native-tls"] }
+native-tls = "0.2"
+spoti-athena = { path = "athena", optional = true, features = ["wayland"] }
+
+[features]
+popover = ["dep:spoti-athena"]
+
+[[bin]]
+name = "spoti-popover"
+path = "src/bin/spoti-popover.rs"
+required-features = ["popover"]
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = true
+

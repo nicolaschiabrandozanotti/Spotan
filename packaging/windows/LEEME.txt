@@ -1,0 +1,12 @@
+Spoti para Windows 10/11 (x64)
+==============================
+Necesitás Spotify Premium.
+
+1. Descomprimí la carpeta donde quieras.
+2. Doble clic en spoti.bat. La primera vez te pide entrar a Spotify desde el navegador.
+
+- Se ve mejor en Windows Terminal (viene con Windows 11).
+- Shift+L: letras.  ?: ayuda de teclas.  q: salir.
+- Si Windows SmartScreen avisa "aplicación no reconocida": Más información > Ejecutar de todas formas.
+  Pasa porque el .exe no está firmado.
+- Tu config queda en %APPDATA%\ncspot y la sesión en %LOCALAPPDATA%\ncspot.

@@ -1,0 +1,44 @@
+# Compilación
+target/
+/dist/
+
+# Residuo de agentes / sesiones
+.claude/
+.codex/
+.agents/
+.cursor/
+.aider*
+CLAUDE.md
+AGENTS.md
+*.jsonl
+
+# Logs
+*.log
+
+# Residuo de mediciones y pruebas en la raíz
+/*.json
+/*.txt
+/*.diff
+/*.patch
+/*-results.md
+/*-audit.md
+/active-memory-cpu-breakdown.md
+
+# Copias de seguridad y soporte local de la máquina
+/backups/
+/build-support/
+/packaging/toolchain/
+
+# Editor / sistema
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+.direnv/
+**/*.rs.bk
+
+# Secretos, por las dudas
+.env
+*.pem
+credentials.json

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Spoti: ventana nativa en Wayland; si no, letras y fondo dentro de una terminal.
+bin="${XDG_DATA_HOME:-$HOME/.local/share}/spoti/ncspot"
+[ $# -gt 0 ] && exec "$bin" "$@"
+[ -n "${WAYLAND_DISPLAY:-}" ] && exec "$bin" --native
+[ -t 0 ] && [ -t 1 ] && exec "$bin" --panels
+for t in x-terminal-emulator kitty alacritty foot wezterm konsole xfce4-terminal gnome-terminal xterm; do
+    command -v "$t" >/dev/null 2>&1 || continue
+    [ "$t" = gnome-terminal ] && exec "$t" -- "$bin" --panels
+    exec "$t" -e "$bin" --panels
+done
+echo "spoti: no encontré ninguna terminal para abrirlo" >&2
+exit 1

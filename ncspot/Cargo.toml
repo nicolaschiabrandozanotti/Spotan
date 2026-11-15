@@ -1,0 +1,149 @@
+[package]
+name = "ncspot"
+readme = "README.md"
+version = "1.5.1"
+description = "ncurses Spotify client written in Rust using librespot, inspired by ncmpc and the likes."
+exclude = ["images/**"]
+keywords = ["spotify", "ncurses", "librespot", "terminal"]
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[badges]
+maintenance = {status = "actively-developed"}
+
+[workspace]
+members = [
+    ".",
+    "xtask"
+]
+
+[workspace.package]
+authors = ["Henrik Friedrichsen <henrik@affekt.org>"]
+edition = "2024"
+license = "BSD-2-Clause"
+repository = "https://github.com/hrkfdn/ncspot"
+
+[workspace.lints.clippy]
+enum_glob_use = "warn"
+use_self = "deny"
+multiple_inherent_impl = "deny"
+
+[lints]
+workspace = true
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[profile.optimized]
+inherits = "release"
+lto = false
+codegen-units = 16
+
+# Distribution build: reduce loaded code without changing audio or features.
+[profile.distribution]
+inherits = "release"
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[dependencies]
+spoti-tools = { path = "..", optional = true }
+smithay-client-toolkit = { version = "=0.19.2", optional = true }
+wayland-client = { version = "0.31", optional = true }
+cairo-rs = { version = "=0.18.5", default-features = false, optional = true }
+chrono = "0.4"
+clap = "4.6.1"
+arboard = {version = "3.6", optional = true}
+crossbeam-channel = "0.5"
+zbus = {version = "6.0.0", default-features = false, features = ["tokio", "service"], optional = true}
+fern = "0.7"
+futures = "0.3"
+image = {version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true}
+ioctl-rs = {version = "0.2", optional = true}
+libc = "0.2.186"
+librespot-core = "0.8.0"
+librespot-oauth = "0.8.0"
+librespot-playback = {version = "0.8.0", default-features = false, features = ["native-tls"]}
+librespot-protocol = "0.8.0"
+log = "0.4.32"
+pancurses = {version = "0.17.0", optional = true}
+parse_duration = "2.1.1"
+platform-dirs = "0.3.0"
+rand = "0.10"
+regex = "1"
+# Share OAuth's HTTP client and the system TLS backend for cover downloads.
+reqwest = {version = "0.12", default-features = false, features = ["blocking", "json", "socks", "native-tls-alpn", "http2", "system-proxy"]}
+serde = "1.0"
+serde_cbor = "0.11.2"
+serde_json = "1.0"
+strum = "0.28"
+strum_macros = "0.28"
+tokio = {version = "1", features = ["rt-multi-thread", "sync", "time", "net"]}
+tokio-util = {version = "0.7.18", features = ["codec"]}
+tokio-stream = {version = "0.1.18", features = ["sync"]}
+toml = "1.1"
+unicode-width = "=0.2.0"
+unicode-segmentation = "1"
+url = "2.5"
+viuer = {version = "0.11", default-features = false, features = ["icy_sixel"], optional = true}
+
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.4.4"
+
+[dependencies.rspotify]
+default-features = false
+features = ["client-ureq", "ureq-native-tls"]
+version = "0.16.1"
+
+[dependencies.cursive]
+default-features = false
+version = "0.21.1"
+
+[dependencies.notify-rust]
+default-features = false
+version = "4"
+# Use zbus, which we already depend on, instead of dbus.
+features = ["z"]
+optional = true
+
+[features]
+# Lyrics and braille panels inside any terminal (Windows included).
+panels = ["dep:spoti-tools"]
+native = ["panels", "dep:smithay-client-toolkit", "dep:wayland-client", "dep:cairo-rs"]
+alsa_backend = ["librespot-playback/alsa-backend"]
+cover = ["image", "ioctl-rs", "viuer"] # Support displaying the album cover
+default = ["share_clipboard", "pulseaudio_backend", "mpris", "notify", "crossterm_backend"]
+mpris = ["zbus"] # Allow ncspot to be controlled via MPRIS API
+ncurses_backend = ["cursive/ncurses-backend"]
+notify = ["notify-rust"] # Show what's playing via a notification
+crossterm_backend = ["cursive/crossterm-backend"]
+pancurses_backend = ["cursive/pancurses-backend", "pancurses/win32"]
+portaudio_backend = ["librespot-playback/portaudio-backend"]
+pulseaudio_backend = ["librespot-playback/pulseaudio-backend"]
+rodio_backend = ["librespot-playback/rodio-backend"]
+share_clipboard = ["arboard", "arboard/wayland-data-control"] # Share a link to the system clipboard
+share_selection = ["arboard", "arboard/wayland-data-control"] # Use the primary selection for sharing - linux and bsd only
+termion_backend = ["cursive/termion-backend"]
+
+[dev-dependencies]
+parking_lot = "0.12"
+tempfile = "3"
+
+[package.metadata.deb]
+assets = [
+  ["target/release/ncspot", "usr/bin/", "755"],
+  ["misc/ncspot.desktop", "usr/share/applications/", "644"],
+  ["images/logo.svg", "usr/share/icons/hicolor/scalable/apps/ncspot.svg", "644"],
+  ["README.md", "usr/share/doc/ncspot/README.md", "644"],
+]
+depends = "$auto"
+extended-description = """\
+ncurses Spotify client written in Rust using librespot. \
+It is heavily inspired by ncurses MPD clients, such as ncmpc."""
+license-file = ["LICENSE"]
+priority = "optional"
+section = "sound"

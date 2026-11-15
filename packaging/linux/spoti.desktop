@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Spoti
+Comment=Spotify liviano: letras, fondo braille y tema Athena
+Exec=spoti
+Icon=multimedia-audio-player
+Terminal=false
+Categories=Audio;Music;Player;
+Keywords=spotify;music;musica;

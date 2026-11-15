@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="500" viewBox="0 0 900 500" role="img" aria-label="Before and after (measured on Linux, native window)">
+<rect width="100%" height="100%" rx="18" fill="#18181F"/>
+<g font-family="JetBrains Mono, ui-monospace, Menlo, Consolas, monospace">
+<text x="32" y="44" font-size="20" font-weight="700" fill="#E8DFDF">Before and after (measured on Linux, native window)</text>
+<rect x="32" y="60" width="14" height="14" rx="3" fill="#6F7BBF"/><text x="52" y="72" font-size="14" fill="#B4A3A8">Before</text>
+<rect x="132" y="60" width="14" height="14" rx="3" fill="#D0748F"/><text x="152" y="72" font-size="14" fill="#B4A3A8">Now</text>
+<text x="32" y="122" font-size="15" fill="#E8DFDF">Executable</text>
+<text x="32" y="142" font-size="12" fill="#B4A3A8">MiB</text>
+<line x1="300" y1="98" x2="300" y2="158" stroke="#33303A" stroke-width="1"/>
+<path d="M300 102 H776.0 a4 4 0 0 1 4 4 V120 a4 4 0 0 1 -4 4 H300 Z" fill="#6F7BBF"><title>Executable: 34.8 MiB</title></path>
+<text x="790.0" y="118" font-size="14" fill="#E8DFDF">34.8</text>
+<path d="M300 130 H473.9310344827586 a4 4 0 0 1 4 4 V148 a4 4 0 0 1 -4 4 H300 Z" fill="#D0748F"><title>Executable: 12.9 MiB</title></path>
+<text x="487.9310344827586" y="146" font-size="14" fill="#E8DFDF">12.9</text>
+<text x="32" y="214" font-size="15" fill="#E8DFDF">Player RAM</text>
+<text x="32" y="234" font-size="12" fill="#B4A3A8">MiB</text>
+<line x1="300" y1="190" x2="300" y2="250" stroke="#33303A" stroke-width="1"/>
+<path d="M300 194 H776.0 a4 4 0 0 1 4 4 V212 a4 4 0 0 1 -4 4 H300 Z" fill="#6F7BBF"><title>Player RAM: 31.6 MiB</title></path>
+<text x="790.0" y="210" font-size="14" fill="#E8DFDF">31.6</text>
+<path d="M300 222 H736.506329113924 a4 4 0 0 1 4 4 V240 a4 4 0 0 1 -4 4 H300 Z" fill="#D0748F"><title>Player RAM: 29 MiB</title></path>
+<text x="750.506329113924" y="238" font-size="14" fill="#E8DFDF">29</text>
+<text x="32" y="306" font-size="15" fill="#E8DFDF">CPU, hidden window</text>
+<text x="32" y="326" font-size="12" fill="#B4A3A8">% of 1 core</text>
+<line x1="300" y1="282" x2="300" y2="342" stroke="#33303A" stroke-width="1"/>
+<path d="M300 286 H776.0 a4 4 0 0 1 4 4 V304 a4 4 0 0 1 -4 4 H300 Z" fill="#6F7BBF"><title>CPU, hidden window: 2.63 % of 1 core</title></path>
+<text x="790.0" y="302" font-size="14" fill="#E8DFDF">2.63</text>
+<path d="M300 314 H489.4600760456274 a4 4 0 0 1 4 4 V332 a4 4 0 0 1 -4 4 H300 Z" fill="#D0748F"><title>CPU, hidden window: 1.06 % of 1 core</title></path>
+<text x="503.4600760456274" y="330" font-size="14" fill="#E8DFDF">1.06</text>
+<text x="32" y="398" font-size="15" fill="#E8DFDF">Threads</text>
+<line x1="300" y1="374" x2="300" y2="434" stroke="#33303A" stroke-width="1"/>
+<path d="M300 378 H776.0 a4 4 0 0 1 4 4 V396 a4 4 0 0 1 -4 4 H300 Z" fill="#6F7BBF"><title>Threads: 18 </title></path>
+<text x="790.0" y="394" font-size="14" fill="#E8DFDF">18</text>
+<path d="M300 406 H509.33333333333337 a4 4 0 0 1 4 4 V424 a4 4 0 0 1 -4 4 H300 Z" fill="#D0748F"><title>Threads: 8 </title></path>
+<text x="523.3333333333334" y="422" font-size="14" fill="#E8DFDF">8</text>
+<text x="32" y="478" font-size="12" fill="#B4A3A8">RAM: PSS + SwapPss. Varies with window size, library and track.</text></g></svg>

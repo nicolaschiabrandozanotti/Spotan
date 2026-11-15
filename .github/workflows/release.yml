@@ -1,0 +1,16 @@
+# Al pushear un tag v* compila Linux y Windows y los publica en Releases.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: packaging/build.sh
+      - run: gh release create "$GITHUB_REF_NAME" dist/spoti-linux-x86_64.tar.gz dist/spoti-windows-x86_64.zip --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

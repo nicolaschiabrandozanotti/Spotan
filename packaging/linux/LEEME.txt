@@ -1,0 +1,14 @@
+Spoti para Linux (x86_64)
+=========================
+Necesitás Spotify Premium.
+
+1. ./install.sh
+2. Abrí "spoti". La primera vez te pide entrar a Spotify desde el navegador.
+
+- En Wayland (Hyprland, GNOME, KDE...) abre su propia ventana.
+- En X11 abre una terminal con el mismo panel.
+- Shift+L: letras.  ?: ayuda de teclas.  q: salir.
+- Desinstalar: ./uninstall.sh
+
+Probado en Ubuntu 22.04/24.04, Debian 12, Fedora y Arch. Requiere PulseAudio o PipeWire, cairo y xkbcommon
+(vienen con cualquier escritorio).

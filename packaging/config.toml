@@ -1,0 +1,29 @@
+# Spoti: base fría y acentos cálidos, junto al escritorio Athena.
+# Ayuda: https://github.com/hrkfdn/ncspot/blob/main/doc/users.md
+use_nerdfont = true
+default_keybindings = true
+initial_screen = "library"
+bitrate = 320
+gapless = true
+audio_cache_size = 128
+
+[theme]
+background = "#18181F"
+primary = "#E8DFDF"
+secondary = "#B4A3A8"
+title = "#D2B4BE"
+playing = "#DAB4B4"
+playing_selected = "#E8DFDF"
+playing_bg = "#1F1818"
+highlight = "#F4E9E9"
+highlight_bg = "#745151"
+highlight_inactive_bg = "#48363B"
+error = "#F4E9E9"
+error_bg = "#74424C"
+statusbar = "#E8DFDF"
+statusbar_progress = "#DAB4B4"
+statusbar_progress_bg = "#48363B"
+statusbar_bg = "#745151"
+cmdline = "#E8DFDF"
+cmdline_bg = "#1F1818"
+search_match = "#E6BDCB"

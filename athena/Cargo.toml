@@ -1,0 +1,30 @@
+[package]
+name = "spoti-athena"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+description = "Optional Spoti controls, with a Linux Wayland layer-shell adapter"
+
+[dependencies]
+spoti-control = { path = "../control" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+smithay-client-toolkit = { version = "=0.19.2", default-features = false, features = ["calloop"], optional = true }
+wayland-client = { version = "0.31", optional = true }
+cairo-rs = { version = "=0.18.5", default-features = false, optional = true }
+
+[features]
+default = []
+wayland = ["dep:smithay-client-toolkit", "dep:wayland-client", "dep:cairo-rs"]
+
+[[bin]]
+name = "spoti-popover"
+path = "src/main.rs"
+required-features = ["wayland"]
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = true
