@@ -62,6 +62,8 @@ pub struct Spotify {
     since: Arc<RwLock<Option<SystemTime>>>,
     /// Channel to send commands to the worker thread.
     channel: Arc<RwLock<Option<mpsc::UnboundedSender<WorkerCommand>>>>,
+    /// The live librespot session, replaced by the worker on reconnect.
+    session: Arc<RwLock<Option<Session>>>,
 }
 
 impl Spotify {
@@ -81,6 +83,7 @@ impl Spotify {
             elapsed: Arc::new(RwLock::new(None)),
             since: Arc::new(RwLock::new(None)),
             channel: Arc::new(RwLock::new(None)),
+            session: Arc::new(RwLock::new(None)),
         };
 
         let (user_tx, user_rx) = oneshot::channel();
@@ -123,6 +126,7 @@ impl Spotify {
             elapsed: Arc::new(RwLock::new(None)),
             since: Arc::new(RwLock::new(None)),
             channel: Arc::new(RwLock::new(None)),
+            session: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -135,6 +139,7 @@ impl Spotify {
         let (tx, rx) = mpsc::unbounded_channel();
         *self.channel.write().unwrap() = Some(tx);
         let worker_channel = self.channel.clone();
+        let shared_session = self.session.clone();
         let cfg = self.cfg.clone();
         let events = self.events.clone();
         let volume = self.volume();
@@ -143,6 +148,7 @@ impl Spotify {
         let backend = Self::init_backend(backend_name)?;
         ASYNC_RUNTIME.get().unwrap().spawn(Self::worker(
             worker_channel,
+            shared_session,
             events,
             rx,
             cfg,
@@ -261,6 +267,7 @@ impl Spotify {
     #[allow(clippy::too_many_arguments)]
     async fn worker(
         worker_channel: Arc<RwLock<Option<mpsc::UnboundedSender<WorkerCommand>>>>,
+        shared_session: Arc<RwLock<Option<Session>>>,
         events: EventManager,
         commands: mpsc::UnboundedReceiver<WorkerCommand>,
         cfg: Arc<config::Config>,
@@ -286,6 +293,7 @@ impl Spotify {
         let session = Self::create_session(&cfg, credentials.clone())
             .await
             .expect("Could not create session");
+        *shared_session.write().unwrap() = Some(session.clone());
         user_tx.map(|tx| tx.send(session.username()));
 
         let mixer_factory_opt = librespot_playback::mixer::find(Some(SoftMixer::NAME));
@@ -309,6 +317,7 @@ impl Spotify {
             player_events,
             commands,
             session,
+            shared_session,
             player,
             mixer,
             cfg,
@@ -320,6 +329,15 @@ impl Spotify {
         error!("worker thread died, requesting restart");
         *worker_channel.write().unwrap() = None;
         events.send(Event::SessionDied)
+    }
+
+    /// The current librespot session, if connected and still valid.
+    pub fn session(&self) -> Option<Session> {
+        self.session
+            .read()
+            .unwrap()
+            .clone()
+            .filter(|session| !session.is_invalid())
     }
 
     /// Get the current playback status of the [Player].

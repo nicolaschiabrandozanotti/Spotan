@@ -10,7 +10,7 @@ use librespot_core::session::Session;
 use librespot_playback::mixer::Mixer;
 use librespot_playback::player::{Player, PlayerEvent as LibrespotPlayerEvent};
 use log::{debug, error, info, warn};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::time::SystemTime;
 use tokio::sync::mpsc;
@@ -50,6 +50,7 @@ pub struct Worker {
     player_events: UnboundedReceiverStream<LibrespotPlayerEvent>,
     commands: UnboundedReceiverStream<WorkerCommand>,
     session: Session,
+    shared_session: Arc<RwLock<Option<Session>>>,
     player: Arc<Player>,
     player_status: PlayerStatus,
     mixer: Arc<dyn Mixer>,
@@ -64,6 +65,7 @@ impl Worker {
         player_events: mpsc::UnboundedReceiver<LibrespotPlayerEvent>,
         commands: mpsc::UnboundedReceiver<WorkerCommand>,
         session: Session,
+        shared_session: Arc<RwLock<Option<Session>>>,
         player: Arc<Player>,
         mixer: Arc<dyn Mixer>,
         cfg: Arc<config::Config>,
@@ -75,6 +77,7 @@ impl Worker {
             commands: UnboundedReceiverStream::new(commands),
             player,
             session,
+            shared_session,
             player_status: PlayerStatus::Stopped,
             mixer,
             cfg,
@@ -120,6 +123,7 @@ impl Worker {
                         Ok(session) => {
                             info!("Librespot session reconnected");
                             self.player.set_session(session.clone());
+                            *self.shared_session.write().unwrap() = Some(session.clone());
                             self.session = session;
                             failed_attempts = 0;
                             load_failed = false;
