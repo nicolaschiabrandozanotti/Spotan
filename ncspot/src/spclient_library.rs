@@ -35,6 +35,19 @@ pub fn timestamp_ms(ms: i64) -> Option<DateTime<Utc>> {
     DateTime::from_timestamp_millis(ms)
 }
 
+/// `added_at` de Spotify: milisegundos como texto.
+fn parse_added_at(ms: Option<&str>) -> Option<DateTime<Utc>> {
+    timestamp_ms(ms?.parse().ok()?)
+}
+
+/// (uri, fecha en que se dio me gusta) de cada pista de una página de contexto.
+fn page_tracks(page: &librespot_protocol::context_page::ContextPage) -> Vec<(String, Option<DateTime<Utc>>)> {
+    page.tracks
+        .iter()
+        .map(|t| (t.uri().to_string(), parse_added_at(t.metadata.get("added_at").map(String::as_str))))
+        .collect()
+}
+
 fn cover(group: &metadata::ImageGroup) -> Option<String> {
     let img = group.image.iter().max_by_key(|i| i.size() as i32)?;
     Some(format!("https://i.scdn.co/image/{}", hex(img.file_id())))
@@ -222,10 +235,10 @@ pub fn liked_tracks(spotify: &Spotify, cached: &[Track]) -> Result<Vec<Track>, (
             .get_context(&format!("spotify:user:{}:collection", session.username()))
             .await
             .map_err(|e| warn!("me gusta: {e}"))?;
-        let mut uris: Vec<String> = vec![];
+        let mut uris: Vec<(String, Option<DateTime<Utc>>)> = vec![];
         let mut visited = std::collections::HashSet::new();
         for page in &ctx.pages {
-            uris.extend(page.tracks.iter().map(|t| t.uri().to_string()));
+            uris.extend(page_tracks(page));
             // Página sin pistas (sólo `page_url`) o con `next_page_url`: se siguen como JSON.
             let mut next = match (page.tracks.is_empty(), page.next_page_url(), page.page_url()) {
                 (_, n, _) if !n.is_empty() => n.to_string(),
@@ -239,25 +252,33 @@ pub fn liked_tracks(spotify: &Spotify, cached: &[Track]) -> Result<Vec<Track>, (
                 }
                 let body = sp.get_next_page(&next).await.map_err(|e| warn!("me gusta (página): {e}"))?;
                 let json: serde_json::Value = serde_json::from_slice(&body).map_err(|_| ())?;
-                let found = json["tracks"].as_array().into_iter().flatten().filter_map(|t| t["uri"].as_str());
-                uris.extend(found.map(String::from));
+                let found = json["tracks"].as_array().into_iter().flatten().filter_map(|t| {
+                    let added = parse_added_at(t["metadata"]["added_at"].as_str());
+                    Some((t["uri"].as_str()?.to_string(), added))
+                });
+                uris.extend(found);
                 next = json["next_page_url"].as_str().unwrap_or_default().to_string();
             }
         }
         let mut seen = std::collections::HashSet::new();
-        uris.retain(|u| seen.insert(u.clone()));
+        uris.retain(|(u, _)| seen.insert(u.clone()));
         let known: HashMap<&str, &Track> = cached.iter().filter_map(|t| Some((t.id.as_deref()?, t))).collect();
         let missing: Vec<String> = uris
             .iter()
+            .map(|(u, _)| u)
             .filter(|u| u.starts_with("spotify:track:") && !known.contains_key(&u["spotify:track:".len()..]))
             .cloned()
             .collect();
         let fetched = fetch_tracks(&sp, &missing).await?;
         Ok(uris
             .iter()
-            .filter_map(|u| {
+            .filter_map(|(u, added)| {
                 let id = u.strip_prefix("spotify:track:")?;
-                known.get(id).map(|t| (*t).clone()).or_else(|| fetched.get(u).map(|m| track_from_metadata(m, None)))
+                let mut t = known.get(id).map(|t| (*t).clone()).or_else(|| fetched.get(u).map(|m| track_from_metadata(m, None)))?;
+                if added.is_some() {
+                    t.added_at = *added;
+                }
+                Some(t)
             })
             .enumerate()
             .map(|(i, mut t)| {
@@ -302,6 +323,30 @@ pub fn playlist_items(spotify: &Spotify, id: &str) -> Result<Vec<Playable>, ()> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn liked_added_at_comes_from_context_metadata() {
+        use librespot_protocol::context_page::ContextPage;
+        use librespot_protocol::context_track::ContextTrack;
+        let track = |uri: &str, added: Option<&str>| {
+            let mut t = ContextTrack::new();
+            t.uri = Some(uri.to_string());
+            if let Some(a) = added {
+                t.metadata.insert("added_at".into(), a.into());
+            }
+            t
+        };
+        let mut page = ContextPage::new();
+        page.tracks = vec![
+            track("spotify:track:a", Some("1790390045000")),
+            track("spotify:track:b", Some("basura")),
+            track("spotify:track:c", None),
+        ];
+        let got = page_tracks(&page);
+        assert_eq!(got[0].1.unwrap().to_rfc3339(), "2026-09-26T02:34:05+00:00");
+        assert_eq!(got[1].1, None);
+        assert_eq!(got[2].1, None);
+    }
+
     #[test]
     fn block_on_works_inside_the_runtime() {
         let rt = tokio::runtime::Builder::new_multi_thread()
