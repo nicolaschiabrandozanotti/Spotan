@@ -7,7 +7,7 @@ use log::{error, info, warn};
 
 use crate::oauth_login::{self, LoginTokens};
 
-use crate::config::{self, Config};
+use crate::config;
 
 pub const SPOTIFY_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
 
@@ -61,7 +61,7 @@ static NCSPOT_OAUTH_SCOPES: &[&str] = &[
 
 /// Cached librespot credentials, or `None` when the start screen must ask for a login.
 /// Never prints or opens a browser.
-pub fn get_credentials(_configuration: &Config) -> Result<Option<RespotCredentials>, String> {
+pub fn get_credentials() -> Result<Option<RespotCredentials>, String> {
     let cache = Cache::new(Some(config::cache_path("librespot")), None, None, None)
         .map_err(|e| format!("Could not create librespot cache: {e}"))?;
     let cached = cache.credentials();
@@ -308,8 +308,7 @@ mod test {
     #[test]
     fn missing_credentials_means_start_screen() {
         let (_g, _dir) = sandbox();
-        let cfg = Config::new(None);
-        assert!(get_credentials(&cfg).unwrap().is_none());
+        assert!(get_credentials().unwrap().is_none());
     }
 
     #[test]

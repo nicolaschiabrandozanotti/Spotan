@@ -71,8 +71,8 @@ fn start_login<T: Send + 'static>(
                 set_text(s, MSG, format!("Esperando el navegador…\n{url}"));
             }));
         });
+        // `done` decides when to re-enable the buttons.
         let _ = sink.send(Box::new(move |s| {
-            set_enabled(s, true);
             done(s, result);
         }));
     });
@@ -91,9 +91,9 @@ impl SettingsView {
     pub fn new(
         mode: SettingsMode,
         account: Option<String>,
-        on_logged_in: Box<dyn Fn(RespotCredentials) + Send + Sync>,
+        on_logged_in: Box<dyn Fn(RespotCredentials) -> Result<(), String> + Send + Sync>,
     ) -> Self {
-        let on_logged_in: Arc<dyn Fn(RespotCredentials) + Send + Sync> = Arc::from(on_logged_in);
+        let on_logged_in: Arc<dyn Fn(RespotCredentials) -> Result<(), String> + Send + Sync> = Arc::from(on_logged_in);
         let mut layout = LinearLayout::vertical().child(TextView::new("Ajustes"));
         if mode == SettingsMode::Start {
             layout.add_child(TextView::new("Iniciá sesión para empezar"));
@@ -117,14 +117,15 @@ impl SettingsView {
                     let on_logged_in = on_logged_in.clone();
                     start_login(
                         s,
-                        |on_url| authentication::create_credentials_with(on_url),
-                        move |s, result| match result {
-                            Ok(credentials) => {
-                                set_text(s, MSG, "Sesión iniciada".into());
-                                // May block (startup flow): keep it off the UI thread.
-                                std::thread::spawn(move || on_logged_in(credentials));
+                        // Runs on the login thread: the buttons stay disabled until it ends.
+                        move |on_url| on_logged_in(authentication::create_credentials_with(on_url)?),
+                        |s, result| match result {
+                            // Start mode quits right after; keep the buttons disabled.
+                            Ok(()) => set_text(s, MSG, "Sesión iniciada".into()),
+                            Err(e) => {
+                                set_enabled(s, true);
+                                set_text(s, MSG, format!("Error: {e}"));
                             }
-                            Err(e) => set_text(s, MSG, format!("Error: {e}")),
                         },
                     );
                 }
@@ -157,6 +158,7 @@ impl SettingsView {
                         s,
                         |on_url| authentication::api_login(on_url),
                         |s, result| {
+                            set_enabled(s, true);
                             refresh_api(s);
                             set_text(s, MSG, match result {
                                 Ok(()) => "Sesión de API iniciada".into(),

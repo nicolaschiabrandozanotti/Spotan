@@ -64,11 +64,11 @@ pub fn create_cursive() -> Result<(CursiveRunner<Cursive>, DrawPacing), Box<dyn 
         let mut runner=CursiveRunner::new(Cursive::new(),Box::new(backend));
         runner.set_fps(8);
         runner.add_global_callback(crate::native_window::close_event(),|s|{
-            if let Some(data)=s.user_data::<crate::application::UserData>().cloned(){data.cmd.handle(s,crate::command::Command::Quit);}
+            match s.user_data::<crate::application::UserData>().cloned(){Some(data)=>data.cmd.handle(s,crate::command::Command::Quit),None=>s.quit()}
         });
         // Override Cursive's default Ctrl+C quit so the playback state is saved.
         runner.set_on_pre_event(cursive::event::Event::CtrlChar('c'),|s|{
-            if let Some(data)=s.user_data::<crate::application::UserData>().cloned(){data.cmd.handle(s,crate::command::Command::Quit);}
+            match s.user_data::<crate::application::UserData>().cloned(){Some(data)=>data.cmd.handle(s,crate::command::Command::Quit),None=>s.quit()}
         });
         return Ok((runner,pacing));
     }

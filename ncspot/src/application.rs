@@ -4,8 +4,8 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use cursive::traits::Nameable;
-use librespot_core::authentication::Credentials;
 use cursive::{Cursive, CursiveRunner};
+use librespot_core::authentication::Credentials;
 use log::{error, info, trace};
 
 #[cfg(unix)]
@@ -81,19 +81,10 @@ fn start_screen(
                     v.set_content("Conectando…")
                 });
             }));
-            match Spotify::test_credentials(&configuration, credentials.clone()) {
-                Ok(_) => {
-                    let _ = tx.send(credentials);
-                    let _ = sink.send(Box::new(|s| s.quit()));
-                }
-                Err(e) => {
-                    let _ = sink.send(Box::new(move |s| {
-                        s.call_on_name(ui::settings::MSG, |v: &mut cursive::views::TextView| {
-                            v.set_content(format!("Error: {e}"))
-                        });
-                    }));
-                }
-            }
+            Spotify::test_credentials(&configuration, credentials.clone()).map_err(|e| e.to_string())?;
+            let _ = tx.send(credentials);
+            let _ = sink.send(Box::new(|s| s.quit()));
+            Ok(())
         }),
     );
     cursive.add_fullscreen_layer(view);
@@ -105,7 +96,11 @@ fn start_screen(
     while cursive.is_running() {
         pacing.step(&mut cursive);
     }
-    rx.try_recv().map_err(|_| "Inicio de sesión cancelado".to_string())
+    // Closed without logging in: leave quietly once the terminal is restored.
+    Ok(rx.try_recv().unwrap_or_else(|_| {
+        drop(cursive);
+        std::process::exit(0)
+    }))
 }
 
 /// The representation of an ncspot application.
@@ -150,7 +145,7 @@ impl Application {
         let theme = configuration.build_theme();
 
         let mut start_error = None;
-        let mut credentials = authentication::get_credentials(&configuration)?;
+        let mut credentials = authentication::get_credentials()?;
         if let Some(c) = credentials.clone() {
             if let Err(e) = Spotify::test_credentials(&configuration, c) {
                 error!("Cached credentials rejected: {e}");
@@ -261,7 +256,7 @@ impl Application {
         let settingsview = ui::settings::SettingsView::new(
             ui::settings::SettingsMode::Screen,
             Some(spotify.api.user().unwrap_or_else(|| "sesión activa".into())),
-            Box::new(|_| {}),
+            Box::new(|_| Ok(())),
         );
 
         let queueview = ui::queue::QueueView::new(queue.clone(), library.clone());
