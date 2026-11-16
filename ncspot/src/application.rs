@@ -202,6 +202,12 @@ impl Application {
 
         let libraryview = ui::library::LibraryView::new(queue.clone(), library.clone());
 
+        let settingsview = ui::settings::SettingsView::new(
+            ui::settings::SettingsMode::Screen,
+            Some(spotify.api.user().unwrap_or_else(|| "sesión activa".into())),
+            Box::new(|_| {}),
+        );
+
         let queueview = ui::queue::QueueView::new(queue.clone(), library.clone());
 
         #[cfg(feature = "cover")]
@@ -222,7 +228,8 @@ impl Application {
         )
         .screen("search", search.with_name("search"))
         .screen("library", libraryview.with_name("library"))
-        .screen("queue", queueview);
+        .screen("queue", queueview)
+        .screen("settings", settingsview.with_name("settings"));
 
         #[cfg(feature = "cover")]
         layout.add_screen("cover", coverview.with_name("cover"));

@@ -28,6 +28,7 @@ mod model;
 mod oauth_login;
 mod panic;
 mod queue;
+mod restart;
 mod serialization;
 mod sharing;
 mod spotify;
@@ -102,7 +103,13 @@ fn main() -> Result<(), String> {
                 };
 
             // Start the application event loop.
-            application.run()
+            let result = application.run();
+            // Drop first so cursive restores the terminal before relaunching.
+            drop(application);
+            if restart::requested() {
+                restart::logout_and_restart();
+            }
+            result
         }
     }?;
 

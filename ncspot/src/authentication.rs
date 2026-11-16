@@ -96,13 +96,16 @@ fn credentials_prompt(error_message: Option<String>) -> Result<RespotCredentials
 
 pub fn create_credentials() -> Result<RespotCredentials, String> {
     println!("To login you need to perform OAuth2 authorization using your web browser\n");
+    create_credentials_with(&|url| println!("Browse to: {url}"))
+}
 
-    // Until the settings screen exists (later task), the URL still goes to the console.
+/// Like `create_credentials` but reports the login URL through `on_url` (blocking).
+pub fn create_credentials_with(on_url: &dyn Fn(&str)) -> Result<RespotCredentials, String> {
     crate::oauth_login::oauth_login(
         SPOTIFY_CLIENT_ID,
         "/login",
         OAUTH_SCOPES,
-        &|url| println!("Browse to: {url}"),
+        on_url,
         crate::oauth_login::LOGIN_TIMEOUT,
     )
     .map(|t| RespotCredentials::with_access_token(t.access_token))
@@ -149,7 +152,6 @@ fn clear_token() {
 }
 
 /// Set (or clear with `None`) the custom client ID. A different ID invalidates the token.
-#[allow(dead_code)] // usado en la tarea del menú de ajustes
 pub fn set_api_client_id(id: Option<&str>) -> Result<(), String> {
     let path = config::config_path("api_client_id");
     match id.map(str::trim).filter(|s| !s.is_empty()) {
@@ -180,7 +182,6 @@ pub fn api_session() -> ApiSession {
 }
 
 /// The only interactive path to the Web API token. Blocking.
-#[allow(dead_code)] // usado en la tarea del menú de ajustes
 pub fn api_login(on_url: &dyn Fn(&str)) -> Result<(), String> {
     let id = effective_client_id();
     let tokens = oauth_login::oauth_login(
@@ -196,7 +197,6 @@ pub fn api_login(on_url: &dyn Fn(&str)) -> Result<(), String> {
     Ok(())
 }
 
-#[allow(dead_code)] // usado en la tarea del menú de ajustes
 pub fn api_logout() {
     clear_token();
     let _ = fs::remove_file(config::cache_path(EXPIRED_MARK));

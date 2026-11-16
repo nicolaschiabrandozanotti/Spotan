@@ -46,6 +46,7 @@ pub mod playlists;
 pub mod queue;
 pub mod search;
 pub mod search_results;
+pub mod settings;
 pub mod show;
 pub mod statusbar;
 pub mod spoti_background;
