@@ -141,6 +141,12 @@ impl<I: ListItem + Clone> Pagination<I> {
         *self.max_content.write().unwrap() = Some(max_content);
     }
 
+    /// Ajusta el rango sin tocar el callback (que puede estar corriendo).
+    pub fn update_range(&self, loaded_content: usize, max_content: Option<usize>) {
+        *self.loaded_content.write().unwrap() = loaded_content;
+        *self.max_content.write().unwrap() = max_content;
+    }
+
     pub fn loaded_content(&self) -> usize {
         *self.loaded_content.read().unwrap()
     }

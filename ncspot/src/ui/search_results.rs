@@ -8,23 +8,163 @@ use crate::model::artist::Artist;
 use crate::model::episode::Episode;
 use crate::model::playlist::Playlist;
 use crate::model::show::Show;
-use crate::model::track::Track;
+use crate::external::{self, Page};
+use crate::model::track::{Source, Track};
 use crate::queue::Queue;
 use crate::spotify::{Spotify, UriType};
 use crate::spotify_url::SpotifyUrl;
 use crate::traits::{ListItem, ViewExt};
 use crate::ui::listview::ListView;
 use crate::ui::pagination::Pagination;
+use crate::ui::source_filter::{SourceFilter, build_results, merge_and_filter};
 use crate::ui::tabbedview::TabbedView;
 use cursive::Cursive;
 use cursive::view::ViewWrapper;
 use rspotify::model::SearchType;
 use rspotify::model::search::SearchResult;
-use std::sync::{Arc, RwLock};
+use cursive::event::{Event, EventResult};
+use cursive::{Printer, Vec2, View};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, RwLock};
+
+/// Resultados de Tracks sin filtrar y cursores de paginación por servicio.
+#[derive(Default)]
+struct SearchState {
+    /// Número de búsqueda: un hilo de una búsqueda vieja no escribe en la nueva.
+    generation: u64,
+    all: Vec<Track>,
+    on: HashSet<Source>,
+    /// `Some(token)` mientras el servicio tenga más páginas (Spotify: offset).
+    next: HashMap<Source, Option<String>>,
+}
+
+type SharedState = Arc<Mutex<SearchState>>;
+
+/// Recalcula la lista visible y el rango de paginación a partir de `all` y los filtros.
+fn refresh(state: &Mutex<SearchState>, results: &RwLock<Vec<Track>>, pagination: &Pagination<Track>) {
+    let st = state.lock().unwrap();
+    let list = merge_and_filter(&st.all, &st.on);
+    let len = list.len();
+    let more = st.on.iter().any(|s| matches!(st.next.get(s), Some(Some(_))));
+    *results.write().unwrap() = list;
+    pagination.update_range(len, more.then_some(len + 1));
+}
+
+/// Agrega la página de `source` si la búsqueda sigue vigente; los fallos solo avisan.
+fn apply_page(
+    state: &Mutex<SearchState>,
+    generation: u64,
+    source: Source,
+    result: Result<Page, String>,
+    ev: &EventManager,
+) -> bool {
+    let mut st = state.lock().unwrap();
+    if st.generation != generation {
+        return false;
+    }
+    st.next.insert(source, result.as_ref().ok().and_then(|p| p.next.clone()));
+    let (tracks, warnings) = build_results(vec![(source, result)]);
+    st.all.extend(tracks);
+    drop(st);
+    for w in warnings {
+        ev.notify(w);
+    }
+    true
+}
+
+fn fetch_page(spotify: &Spotify, source: Source, query: &str, token: Option<&str>) -> Result<Page, String> {
+    match source {
+        Source::Spotify => {
+            let offset: u32 = token.and_then(|t| t.parse().ok()).unwrap_or(0);
+            match spotify.api.search(SearchType::Track, query, crate::authentication::search_page_size(), offset) {
+                Ok(SearchResult::Tracks(r)) => {
+                    let tracks: Vec<Track> = r.items.iter().map(|ft| ft.into()).collect();
+                    let loaded = offset + tracks.len() as u32;
+                    let next = (!tracks.is_empty() && loaded < r.total).then(|| loaded.to_string());
+                    Ok(Page { tracks, next })
+                }
+                _ => Err("Spotify".into()),
+            }
+        }
+        Source::YouTube => external::youtube::search(query, token),
+        Source::SoundCloud => external::soundcloud::search(query, token),
+    }
+}
+
+/// Pestaña Tracks: barra de filtros (si hay 2+ servicios) encima de la lista.
+struct TracksTab {
+    bar: SourceFilter,
+    list: ListView<Track>,
+}
+
+impl TracksTab {
+    fn bar_height(&self) -> usize {
+        usize::from(self.bar.visible())
+    }
+}
+
+impl View for TracksTab {
+    fn required_size(&mut self, constraint: Vec2) -> Vec2 {
+        let l = self.list.required_size(constraint);
+        Vec2::new(l.x, l.y + self.bar_height())
+    }
+
+    fn layout(&mut self, size: Vec2) {
+        let h = self.bar_height();
+        self.bar.layout(Vec2::new(size.x, h));
+        self.list.layout(Vec2::new(size.x, size.y.saturating_sub(h)));
+    }
+
+    fn draw(&self, printer: &Printer) {
+        let h = self.bar_height();
+        self.bar.draw(&printer.cropped((printer.size.x, h)));
+        self.list.draw(&printer.offset((0, h)));
+    }
+
+    fn on_event(&mut self, event: Event) -> EventResult {
+        let h = self.bar_height();
+        let on_bar = event
+            .mouse_position()
+            .zip(match event { Event::Mouse { offset, .. } => Some(offset), _ => None })
+            .is_some_and(|(p, o)| p.y.saturating_sub(o.y) < h);
+        if on_bar {
+            return self.bar.on_event(event);
+        }
+        self.list.on_event(event.relativized((0, h)))
+    }
+}
+
+impl ViewExt for TracksTab {
+    fn title(&self) -> String {
+        self.list.title()
+    }
+
+    fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
+        use crate::command::{MoveMode, TargetMode};
+        if self.bar.visible() {
+            if self.bar.is_focused() {
+                match cmd {
+                    Command::Move(MoveMode::Left, _) => self.bar.move_cursor(-1),
+                    Command::Move(MoveMode::Right, _) => self.bar.move_cursor(1),
+                    Command::Move(MoveMode::Down, _) => self.bar.set_focused(false),
+                    Command::Open(TargetMode::Selected) | Command::Play => self.bar.toggle_cursor(),
+                    _ => return self.list.on_command(s, cmd),
+                }
+                return Ok(CommandResult::Consumed(None));
+            }
+            if matches!(cmd, Command::Move(MoveMode::Up, _)) && self.list.get_selected_index() == 0 {
+                self.bar.set_focused(true);
+                return Ok(CommandResult::Consumed(None));
+            }
+        }
+        self.list.on_command(s, cmd)
+    }
+}
 
 pub struct SearchResultsView {
     search_term: String,
     results_tracks: Arc<RwLock<Vec<Track>>>,
+    state: SharedState,
     pagination_tracks: Pagination<Track>,
     results_albums: Arc<RwLock<Vec<Album>>>,
     pagination_albums: Pagination<Album>,
@@ -60,6 +200,22 @@ impl SearchResultsView {
 
         let list_tracks = ListView::new(results_tracks.clone(), queue.clone(), library.clone());
         let pagination_tracks = list_tracks.get_pagination().clone();
+        let state: SharedState = Arc::default();
+        let mut active = Vec::new();
+        if queue.get_spotify().is_online() {
+            active.push(Source::Spotify);
+        }
+        active.extend(external::enabled());
+        state.lock().unwrap().on = active.iter().copied().collect();
+        let mut bar = SourceFilter::new(active);
+        {
+            let (state, results, pagination) = (state.clone(), results_tracks.clone(), pagination_tracks.clone());
+            bar.on_change(move |on| {
+                state.lock().unwrap().on = on.clone();
+                refresh(&state, &results, &pagination);
+            });
+        }
+        let tracks_tab = TracksTab { bar, list: list_tracks };
         let list_albums = ListView::new(results_albums.clone(), queue.clone(), library.clone());
         let pagination_albums = list_albums.get_pagination().clone();
         let list_artists = ListView::new(results_artists.clone(), queue.clone(), library.clone());
@@ -73,7 +229,7 @@ impl SearchResultsView {
         let pagination_episodes = list_episodes.get_pagination().clone();
 
         let mut tabs = TabbedView::new();
-        tabs.add_tab("Tracks", list_tracks);
+        tabs.add_tab("Tracks", tracks_tab);
         tabs.add_tab("Albums", list_albums);
         tabs.add_tab("Artists", list_artists);
         tabs.add_tab("Playlists", list_playlists);
@@ -83,6 +239,7 @@ impl SearchResultsView {
         let mut view = Self {
             search_term,
             results_tracks,
+            state,
             pagination_tracks,
             results_albums,
             pagination_albums,
@@ -101,47 +258,6 @@ impl SearchResultsView {
 
         view.run_search();
         view
-    }
-
-    fn get_track(
-        spotify: &Spotify,
-        tracks: &Arc<RwLock<Vec<Track>>>,
-        query: &str,
-        _offset: usize,
-        _append: bool,
-    ) -> u32 {
-        if let Ok(results) = spotify.api.track(query) {
-            let t = vec![(&results).into()];
-            let mut r = tracks.write().unwrap();
-            *r = t;
-            return 1;
-        }
-        0
-    }
-
-    fn search_track(
-        spotify: &Spotify,
-        tracks: &Arc<RwLock<Vec<Track>>>,
-        query: &str,
-        offset: usize,
-        append: bool,
-    ) -> u32 {
-        if let Ok(SearchResult::Tracks(results)) =
-            spotify
-                .api
-                .search(SearchType::Track, query, crate::authentication::search_page_size(), offset as u32)
-        {
-            let mut t = results.items.iter().map(|ft| ft.into()).collect();
-            let mut r = tracks.write().unwrap();
-
-            if append {
-                r.append(&mut t);
-            } else {
-                *r = t;
-            }
-            return results.total;
-        }
-        0
     }
 
     fn get_album(
@@ -386,27 +502,106 @@ impl SearchResultsView {
         });
     }
 
+    /// Nueva búsqueda de Tracks: invalida hilos viejos y devuelve su número.
+    fn begin_tracks(&self) -> u64 {
+        let mut st = self.state.lock().unwrap();
+        st.generation += 1;
+        st.all.clear();
+        st.next.clear();
+        st.generation
+    }
+
+    /// Una URI/URL de pista de Spotify va a la misma lista que el resto.
+    fn spotify_track(&self, id: &str) {
+        let generation = self.begin_tracks();
+        let (spotify, id, ev) = (self.spotify.clone(), id.to_owned(), self.events.clone());
+        let (state, results, pagination) =
+            (self.state.clone(), self.results_tracks.clone(), self.pagination_tracks.clone());
+        std::thread::spawn(move || {
+            let page = spotify
+                .api
+                .track(&id)
+                .map(|t| Page { tracks: vec![(&t).into()], next: None })
+                .map_err(|_| "Spotify".to_string());
+            if apply_page(&state, generation, Source::Spotify, page, &ev) {
+                refresh(&state, &results, &pagination);
+                ev.trigger();
+            }
+        });
+    }
+
+    /// Un hilo por servicio (Spotify solo si hay sesión); la paginación pide la
+    /// página siguiente de cada servicio prendido que tenga más.
+    fn search_mixed(&self, query: &str) {
+        let generation = self.begin_tracks();
+        let mut sources = Vec::new();
+        if self.spotify.is_online() {
+            sources.push(Source::Spotify);
+        }
+        sources.extend(external::enabled());
+
+        let (state, results, pagination) =
+            (self.state.clone(), self.results_tracks.clone(), self.pagination_tracks.clone());
+        {
+            let (spotify, query, ev) = (self.spotify.clone(), query.to_owned(), self.events.clone());
+            let (state, results, pg) = (state.clone(), results.clone(), pagination.clone());
+            pagination.set(
+                0,
+                0,
+                Box::new(move |_| {
+                    let pending: Vec<(Source, String)> = {
+                        let st = state.lock().unwrap();
+                        st.on
+                            .iter()
+                            .filter_map(|s| Some((*s, st.next.get(s)?.clone()?)))
+                            .collect()
+                    };
+                    std::thread::scope(|scope| {
+                        for (source, token) in pending {
+                            let (spotify, query, ev, state) = (&spotify, &query, &ev, &state);
+                            scope.spawn(move || {
+                                let page = fetch_page(spotify, source, query, Some(&token));
+                                apply_page(state, generation, source, page, ev);
+                            });
+                        }
+                    });
+                    refresh(&state, &results, &pg);
+                    ev.trigger();
+                }),
+            );
+        }
+        for source in sources {
+            let (spotify, query, ev) = (self.spotify.clone(), query.to_owned(), self.events.clone());
+            let (state, results, pagination) = (state.clone(), results.clone(), pagination.clone());
+            std::thread::spawn(move || {
+                let page = fetch_page(&spotify, source, &query, None);
+                if apply_page(&state, generation, source, page, &ev) {
+                    refresh(&state, &results, &pagination);
+                    ev.trigger();
+                }
+            });
+        }
+    }
+
     pub fn run_search(&mut self) {
         let query = self.search_term.clone();
 
         // check if API token refresh is necessary before commencing multiple
         // requests to avoid deadlock, as the parallel requests might
         // simultaneously try to refresh the token
-        self.spotify
-            .api
-            .update_token()
-            .map(move |h| ASYNC_RUNTIME.get().unwrap().block_on(h).ok());
+        let online = self.spotify.is_online();
+        if online {
+            self.spotify
+                .api
+                .update_token()
+                .map(move |h| ASYNC_RUNTIME.get().unwrap().block_on(h).ok());
+        }
 
         // is the query a Spotify URI?
-        if let Ok(uritype) = query.parse() {
+        if online && let Ok(uritype) = query.parse() {
             match uritype {
                 UriType::Track => {
-                    self.perform_search(
-                        Box::new(Self::get_track),
-                        &self.results_tracks,
-                        &query,
-                        None,
-                    );
+                    self.spotify_track(&query);
                     self.tabs.set_selected(0);
                 }
                 UriType::Album => {
@@ -457,15 +652,10 @@ impl SearchResultsView {
             }
         // Is the query a spotify URL?
         // https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC
-        } else if let Some(url) = SpotifyUrl::from_url(&query) {
+        } else if online && let Some(url) = SpotifyUrl::from_url(&query) {
             match url.uri_type {
                 UriType::Track => {
-                    self.perform_search(
-                        Box::new(Self::get_track),
-                        &self.results_tracks,
-                        &url.id,
-                        None,
-                    );
+                    self.spotify_track(&url.id);
                     self.tabs.set_selected(0);
                 }
                 UriType::Album => {
@@ -515,12 +705,10 @@ impl SearchResultsView {
                 }
             }
         } else {
-            self.perform_search(
-                Box::new(Self::search_track),
-                &self.results_tracks,
-                &query,
-                Some(&self.pagination_tracks),
-            );
+            self.search_mixed(&query);
+            if !online {
+                return;
+            }
             self.perform_search(
                 Box::new(Self::search_album),
                 &self.results_albums,

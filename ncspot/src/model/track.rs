@@ -25,6 +25,11 @@ pub enum Source {
     SoundCloud,
 }
 
+/// Columna derecha de un tema con etiqueta de servicio: sin espacios dobles.
+fn join_right(tag: &str, saved: &str, duration: &str) -> String {
+    [tag, saved, duration].iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join(" ")
+}
+
 impl Source {
     pub fn label(self) -> &'static str {
         match self {
@@ -307,11 +312,11 @@ impl ListItem for Track {
             } else {
                 ""
             };
-            let tag = match self.source {
-                Source::Spotify => String::new(),
-                other => format!("[{}] ", other.label()),
-            };
-            format!("{tag}{saved} {}", self.duration_str())
+            if self.source == Source::Spotify && crate::external::enabled().is_empty() {
+                return format!("{saved} {}", self.duration_str());
+            }
+            let tag = format!("[{}]", self.source.label());
+            join_right(&tag, saved, &self.duration_str())
         }
     }
 
@@ -464,6 +469,12 @@ mod tests {
             None,
             "https://www.youtube.com/watch?v=fJ9rUzIMcZQ".into(),
         )
+    }
+
+    #[test]
+    fn external_row_tag_has_no_double_space() {
+        assert_eq!(join_right("[YT]", "", "3:54"), "[YT] 3:54");
+        assert_eq!(join_right("[SC]", "*", "3:54"), "[SC] * 3:54");
     }
 
     #[test]

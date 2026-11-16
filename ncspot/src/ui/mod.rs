@@ -48,6 +48,7 @@ pub mod search;
 pub mod search_results;
 pub mod settings;
 pub mod show;
+pub mod source_filter;
 pub mod statusbar;
 pub mod spoti_background;
 pub mod tabbedview;
