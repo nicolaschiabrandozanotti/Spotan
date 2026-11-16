@@ -79,10 +79,19 @@ They are **off** by default. To use them:
 
 Without Spotify: on the start screen tick YouTube and/or SoundCloud and press **Entrar sin Spotify** (*Enter without Spotify*); you can log in to Spotify later from Settings.
 
+### Your SoundCloud library
+
+With SoundCloud ticked, in **Settings** (`F4`), under *Other services*, paste your profile link into **Perfil:** (`Ctrl+V` or right-click) and press **Cargar** (Load). A summary shows below, e.g. `Forss · 288 Likes · 4 playlists`. **Quitar** (Remove) clears it.
+
+- It loads your *Likes*, your playlists and the playlists you saved, all public and with no login. Private items are not visible.
+- In **Library** (`F3`), the *Temas* (Tracks) and *Listas* (Lists) tabs mix Spotify and SoundCloud (`[S]` / `[SC]`), with a `[1 Spotify] [2 SoundCloud]` filter bar (keys `1` and `2`).
+- It refreshes when Spoti starts and with `Shift+U`. It also works without Spotify (*Entrar sin Spotify* + profile).
+- It is **read-only**: you can't delete or like anything from SoundCloud in Spoti (`SoundCloud: solo lectura`).
+
 Good to know:
 - **No YouTube or SoundCloud account needed.** Spoti decodes the audio itself (AAC); no yt-dlp, mpv or browser.
 - When off they **cost nothing**: the YouTube/SoundCloud engine starts with the first track from those services (about 2 MiB more RAM while playing) and, if you turn them off, shuts down on the next track.
-- No YouTube/SoundCloud login or library yet: search and play only. *Similar tracks* and *Add to playlist* are Spotify-only.
+- YouTube has no login or library (search and play only); for SoundCloud your public library can be loaded (see above). *Similar tracks* and *Add to playlist* are Spotify-only.
 - On SoundCloud some tracks are 30 s previews (Go+ only); encrypted tracks can't be played and are skipped.
 - If YouTube or SoundCloud change something on their side, it may stop working until the next Spoti release.
 
