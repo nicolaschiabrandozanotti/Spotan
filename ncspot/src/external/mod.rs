@@ -76,6 +76,8 @@ pub fn http() -> &'static reqwest::blocking::Client {
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::blocking::Client::builder()
+            // youtube.com manda ~19 KB de encabezados; hyper corta en 16 KB por defecto con HTTP/2
+            .http2_max_header_list_size(256 * 1024)
             .timeout(Duration::from_secs(20))
             .build()
             .expect("cliente HTTP")
