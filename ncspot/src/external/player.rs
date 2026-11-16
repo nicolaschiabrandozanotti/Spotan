@@ -82,7 +82,12 @@ pub(crate) fn spawn_with_resolver(events: EventManager, backend: SinkBuilder, de
                 current: None,
                 playing: false,
             }
-            .run(rx)
+            .run(rx);
+            // glibc no devuelve sola la memoria que usó este hilo
+            #[cfg(all(target_os = "linux", target_env = "gnu"))]
+            unsafe {
+                libc::malloc_trim(0);
+            }
         })
         .expect("hilo del reproductor externo");
     ExternalPlayer { inner: Arc::new(Inner { tx, generation }) }

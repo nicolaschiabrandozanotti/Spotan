@@ -420,6 +420,13 @@ impl Spotify {
     fn load_with(&self, track: &Playable, start_playing: bool, position_ms: u32, enabled: &[Source]) {
         info!("loading track: {track:?}");
 
+        // YouTube y SoundCloud apagados: soltar el motor externo termina su hilo y libera su memoria
+        if enabled.is_empty() {
+            if let Some(player) = self.external.lock().unwrap().take() {
+                player.send(ExtCmd::Stop);
+            }
+        }
+
         // not playable, no Spotify session, or its service is off
         if !self.can_play_with(track, enabled) {
             warn!("track {track:?} can not be played, skipping..");
@@ -814,7 +821,22 @@ mod tests {
     }
 
     #[test]
+    fn load_with_all_services_off_releases_external_engine() {
+        let (spotify, events, _keep) = offline();
+        *spotify.external.lock().unwrap() = Some(crate::external::player::spawn_with_resolver(
+            events,
+            crate::external::player::tests::test_backend,
+            None,
+            65535,
+            crate::external::player::tests::tone_resolver(),
+        ));
+        spotify.load_with(&external_track(Source::YouTube), false, 0, &[Source::SoundCloud]);
+        assert!(spotify.external.lock().unwrap().is_some());
+        spotify.load_with(&external_track(Source::YouTube), false, 0, &[]);
+        assert!(spotify.external.lock().unwrap().is_none());
+    }
 
+    #[test]
     fn parse_playlist_uri() {
         let uri_type = "spotify:playlist:37i9dQZF1DX36Xw4IJIVKA".parse();
         assert!(matches!(uri_type, Ok(UriType::Playlist)));
