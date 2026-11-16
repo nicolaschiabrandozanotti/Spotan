@@ -256,17 +256,18 @@ impl ContextMenu {
             }
         }
 
-        if let Some(t) = item.track() {
+        // Spotify-only: playlists and recommendations go through the Spotify API.
+        if let Some(t) = item.track()
+            && t.source == crate::model::track::Source::Spotify
+        {
             content.add_item(
                 "Add to playlist",
                 ContextMenuAction::AddToPlaylist(Box::new(t.clone())),
             );
-            if t.source == crate::model::track::Source::Spotify {
-                content.add_item(
-                    "Similar tracks",
-                    ContextMenuAction::ShowRecommendations(Box::new(t)),
-                )
-            }
+            content.add_item(
+                "Similar tracks",
+                ContextMenuAction::ShowRecommendations(Box::new(t)),
+            )
         }
         // If the item is saveable, its save state will be set
         if let Some(savestatus) = item.is_saved(&library) {
