@@ -11,6 +11,7 @@ use strum_macros::Display;
 use crate::config::Config;
 use crate::library::Library;
 use crate::model::playable::Playable;
+use crate::model::track::Source;
 use crate::spotify::PlayerEvent;
 use crate::spotify::Spotify;
 use crate::traits::ListItem;
@@ -52,7 +53,15 @@ pub struct Queue {
 
 impl Queue {
     pub fn new(spotify: Spotify, cfg: Arc<Config>, library: Arc<Library>) -> Self {
-        let queue_state = cfg.state().queuestate.clone();
+        let mut queue_state = cfg.state().queuestate.clone();
+        // the failure mark of external tracks is transient: give them another chance
+        for item in &mut queue_state.queue {
+            if let Playable::Track(t) = item
+                && t.source != Source::Spotify
+            {
+                t.is_playable = Some(true);
+            }
+        }
 
         Self {
             queue: Arc::new(RwLock::new(queue_state.queue)),
@@ -297,7 +306,18 @@ impl Queue {
     /// `reshuffle`: Reshuffle the current order of the queue.
     /// `shuffle_index`: If this is true, `index` isn't actually used, but is
     /// chosen at random as a valid index in the queue.
-    pub fn play(&self, mut index: usize, reshuffle: bool, shuffle_index: bool) {
+    pub fn play(&self, index: usize, reshuffle: bool, shuffle_index: bool) {
+        // an explicit play lets the user retry an entry that failed before
+        if let Some(Playable::Track(t)) = self.queue.write().unwrap().get_mut(index)
+            && t.source != Source::Spotify
+        {
+            t.is_playable = Some(true);
+        }
+        self.start(index, reshuffle, shuffle_index);
+    }
+
+    /// Like `play`, but keeps a failure mark (used by next/previous auto-advance).
+    fn start(&self, mut index: usize, reshuffle: bool, shuffle_index: bool) {
         let queue_length = self.queue.read().unwrap().len();
         // The length of the queue must be bigger than 0 or gen_range panics!
         if queue_length > 0 && shuffle_index && self.get_shuffle() {
@@ -380,14 +400,14 @@ impl Queue {
 
         if repeat == RepeatSetting::RepeatTrack && !manual {
             match current.filter(can) {
-                Some(index) => self.play(index, false, false),
+                Some(index) => self.start(index, false, false),
                 None => self.spotify.stop(),
             }
             return;
         }
         let after = self.current_order_pos().map_or(0..0, |p| p + 1..q.len());
         if let Some(index) = after.map(|p| self.queue_index_at(p)).find(can) {
-            self.play(index, false, false);
+            self.start(index, false, false);
             if repeat == RepeatSetting::RepeatTrack && manual {
                 self.set_repeat(RepeatSetting::RepeatPlaylist);
             }
@@ -395,7 +415,7 @@ impl Queue {
             .then(|| (0..q.len()).map(|p| self.queue_index_at(p)).find(can))
             .flatten()
         {
-            self.play(index, false, false);
+            self.start(index, false, false);
         } else {
             self.spotify.stop();
         }
@@ -410,14 +430,14 @@ impl Queue {
 
         let before = self.current_order_pos().map_or(0..0, |p| 0..p);
         if let Some(index) = before.rev().map(|p| self.queue_index_at(p)).find(can) {
-            self.play(index, false, false);
+            self.start(index, false, false);
         } else if let Some(index) = (repeat == RepeatSetting::RepeatPlaylist)
             .then(|| (0..q.len()).rev().map(|p| self.queue_index_at(p)).find(can))
             .flatten()
         {
-            self.play(index, false, false);
+            self.start(index, false, false);
         } else if let Some(index) = current.filter(can) {
-            self.play(index, false, false);
+            self.start(index, false, false);
         }
     }
 
@@ -972,5 +992,37 @@ pub(crate) mod tests {
         q.handle_event(QueueEvent::TrackFailed("spotify:track:id_1".into()));
         assert!(q.queue.read().unwrap()[0].is_playable());
         assert!(!q.queue.read().unwrap()[1].is_playable());
+    }
+
+    fn failed_external() -> Playable {
+        let mut t = crate::model::track::Track::external(
+            crate::model::track::Source::YouTube, "x".into(), "t".into(), "a".into(), 3000, None, "u".into(),
+        );
+        t.is_playable = Some(false);
+        Playable::Track(t)
+    }
+
+    #[test]
+    fn restore_resets_external_failure_marks_only() {
+        let cfg = Config::new_for_test();
+        let mut spotify_bad = make_track(1);
+        if let Playable::Track(t) = &mut spotify_bad {
+            t.is_playable = Some(false);
+        }
+        cfg.with_state_mut(|s| s.queuestate.queue = vec![failed_external(), spotify_bad.clone()]);
+        let (sink, _keep) = crossbeam_channel::unbounded();
+        let ev = EventManager::new(sink);
+        let spotify = Spotify::new_for_test(cfg.clone(), ev.clone());
+        let library = Library::new_for_test(ev, spotify.clone(), cfg.clone());
+        let q = Queue::new(spotify, cfg, library);
+        assert!(q.queue.read().unwrap()[0].is_playable());
+        assert!(!q.queue.read().unwrap()[1].is_playable());
+    }
+
+    #[test]
+    fn explicit_play_clears_the_failure_mark() {
+        let (q, _ev, _k) = offline_queue(vec![make_track(0), failed_external()], Some(0), true);
+        q.play(1, false, false);
+        assert!(q.queue.read().unwrap()[1].is_playable());
     }
 }
