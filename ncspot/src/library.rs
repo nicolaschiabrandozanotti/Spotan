@@ -139,9 +139,10 @@ impl Library {
         } else {
             // Sin Spotify no hay nada que cargar.
             *library.is_done.write().unwrap() = true;
-        }
-        if library.sc_active() {
-            library.update_soundcloud();
+            // con Spotify en línea, update_library ya lanzó la de SoundCloud
+            if library.sc_active() {
+                library.update_soundcloud();
+            }
         }
         library
     }
@@ -211,6 +212,9 @@ impl Library {
                 }
                 Err(e) => {
                     library.apply_sc_result(Err(e.clone()));
+                    library
+                        .ev
+                        .notify(format!("SoundCloud: no se pudo actualizar la biblioteca ({e})"));
                     *library.sc_status.write().unwrap() = Some(Err(e));
                 }
             }
@@ -1471,6 +1475,7 @@ mod tests {
         use crate::traits::ListItem;
         let (_g, _d) = crate::config::test_sandbox();
         let lib = test_library();
+        *lib.is_done.write().unwrap() = true;
         lib.playlists.write().unwrap().push(Playlist {
             id: "p".to_string(),
             ..playlist("", 0, None)
