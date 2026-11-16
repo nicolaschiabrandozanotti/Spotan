@@ -308,12 +308,10 @@ impl Application {
             }),
             Box::new({
                 let library = library.clone();
-                move |loaded| {
-                    if loaded {
-                        library.update_soundcloud();
-                    } else {
-                        library.clear_soundcloud();
-                    }
+                move |change| match change {
+                    ui::settings::ScChange::Loaded => library.update_soundcloud(),
+                    ui::settings::ScChange::Removed => library.clear_soundcloud(),
+                    ui::settings::ScChange::Toggled => library.sc_visibility_changed(),
                 }
             }),
         );

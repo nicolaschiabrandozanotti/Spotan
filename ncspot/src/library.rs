@@ -3,7 +3,7 @@ use std::fs::File;
 use std::iter::Iterator;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 
 use log::{debug, error, info, warn};
@@ -42,6 +42,12 @@ const CACHE_SC_TRACKS: &str = "sc_tracks.db";
 /// Playlists de SoundCloud en caché.
 const CACHE_SC_PLAYLISTS: &str = "sc_playlists.db";
 
+/// Borra la caché en disco de SoundCloud (también sirve sin `Library`, en la pantalla de inicio).
+pub fn remove_sc_cache() {
+    let _ = std::fs::remove_file(config::cache_path(CACHE_SC_TRACKS));
+    let _ = std::fs::remove_file(config::cache_path(CACHE_SC_PLAYLISTS));
+}
+
 /// The user library with all their saved tracks, albums, playlists... High level interface to the
 /// Spotify API used to manage items in the user library.
 #[derive(Clone)]
@@ -59,6 +65,8 @@ pub struct Library {
     /// Sube con cada cambio de las listas; las vistas mezcladas lo comparan para recalcular.
     generation: Arc<AtomicU64>,
     sc_status: Arc<RwLock<Option<Result<ScUser, String>>>>,
+    /// Perfil cuya descarga está en curso (evita descargas completas en paralelo).
+    sc_inflight: Arc<Mutex<Option<String>>>,
     ev: EventManager,
     spotify: Spotify,
     pub cfg: Arc<Config>,
@@ -81,6 +89,7 @@ impl Library {
             sc_playlists: Arc::new(RwLock::new(Vec::new())),
             generation: Arc::new(AtomicU64::new(0)),
             sc_status: Arc::new(RwLock::new(None)),
+            sc_inflight: Arc::new(Mutex::new(None)),
             ev,
             spotify,
             cfg,
@@ -129,6 +138,7 @@ impl Library {
             sc_playlists: Arc::new(RwLock::new(Vec::new())),
             generation: Arc::new(AtomicU64::new(0)),
             sc_status: Arc::new(RwLock::new(None)),
+            sc_inflight: Arc::new(Mutex::new(None)),
             ev,
             spotify,
             cfg,
@@ -166,7 +176,11 @@ impl Library {
     }
 
     /// Reemplaza las listas de SoundCloud solo si todo bajó bien; si no, queda lo anterior.
-    fn apply_sc_result(&self, result: Result<(Vec<Track>, Vec<Playlist>), String>) {
+    /// Un resultado de un perfil que ya no es el actual se descarta.
+    fn apply_sc_result(&self, url: &str, result: Result<(Vec<Track>, Vec<Playlist>), String>) {
+        if sc_library::profile().as_deref() != Some(url) {
+            return;
+        }
         match result {
             Ok((tracks, playlists)) => {
                 *self.sc_tracks.write().unwrap() = tracks;
@@ -187,6 +201,14 @@ impl Library {
 
     /// Carga la caché y baja la biblioteca de SoundCloud en su propio hilo.
     pub fn update_soundcloud(&self) {
+        let Some(url) = sc_library::profile() else { return };
+        {
+            let mut inflight = self.sc_inflight.lock().unwrap();
+            if inflight.as_deref() == Some(url.as_str()) {
+                return;
+            }
+            *inflight = Some(url.clone());
+        }
         let library = self.clone();
         thread::spawn(move || {
             if library.sc_tracks.read().unwrap().is_empty() {
@@ -201,25 +223,39 @@ impl Library {
                     library.sc_playlists.write().unwrap().as_mut(),
                 );
             }
-            let result = sc_library::profile()
-                .ok_or_else(|| "Sin perfil de SoundCloud".to_string())
-                .and_then(|url| sc_library::resolve(&url))
+            let result = sc_library::resolve(&url)
                 .and_then(|user| Ok((sc_library::fetch_library(user.id)?, user)));
-            match result {
-                Ok((data, user)) => {
-                    library.apply_sc_result(Ok(data));
-                    *library.sc_status.write().unwrap() = Some(Ok(user));
-                }
-                Err(e) => {
-                    library.apply_sc_result(Err(e.clone()));
-                    library
-                        .ev
-                        .notify(format!("SoundCloud: no se pudo actualizar la biblioteca ({e})"));
-                    *library.sc_status.write().unwrap() = Some(Err(e));
+            // si el perfil cambió o se quitó mientras bajaba, este resultado ya no corresponde
+            if sc_library::profile().as_deref() == Some(url.as_str()) {
+                match result {
+                    Ok((data, user)) => {
+                        library.apply_sc_result(&url, Ok(data));
+                        *library.sc_status.write().unwrap() = Some(Ok(user));
+                    }
+                    Err(e) => {
+                        library.apply_sc_result(&url, Err(e.clone()));
+                        library
+                            .ev
+                            .notify(format!("SoundCloud: no se pudo actualizar la biblioteca ({e})"));
+                        *library.sc_status.write().unwrap() = Some(Err(e));
+                    }
                 }
             }
+            let mut inflight = library.sc_inflight.lock().unwrap();
+            if inflight.as_deref() == Some(url.as_str()) {
+                *inflight = None;
+            }
+            drop(inflight);
             library.trigger_redraw();
         });
+    }
+
+    /// Se prendió o apagó SoundCloud en Ajustes: las vistas se recalculan (la caché queda).
+    pub fn sc_visibility_changed(&self) {
+        self.bump_generation();
+        if self.sc_active() {
+            self.update_soundcloud();
+        }
     }
 
     /// Vacía lo de SoundCloud y borra su caché (al quitar el perfil).
@@ -227,8 +263,7 @@ impl Library {
         self.sc_tracks.write().unwrap().clear();
         self.sc_playlists.write().unwrap().clear();
         *self.sc_status.write().unwrap() = None;
-        let _ = std::fs::remove_file(config::cache_path(CACHE_SC_TRACKS));
-        let _ = std::fs::remove_file(config::cache_path(CACHE_SC_PLAYLISTS));
+        remove_sc_cache();
         self.bump_generation();
     }
 
@@ -308,6 +343,9 @@ impl Library {
             None if add_at_front => store.insert(0, updated),
             None => store.push(updated),
         }
+        drop(store);
+        // la pestaña mezclada se entera de las listas que van llegando
+        self.bump_generation();
     }
 
     /// Delete the playlist with the given `id` if it exists.
@@ -373,6 +411,11 @@ impl Library {
         if self.sc_active() {
             self.update_soundcloud();
         }
+        self.update_spotify_library(refetch_unchanged);
+    }
+
+    /// Solo la parte de Spotify de [`Self::update_library`].
+    pub fn update_spotify_library(&self, refetch_unchanged: bool) {
         if !self.spotify.is_online() {
             return;
         }
@@ -1181,6 +1224,7 @@ fn is_stale(local: &Playlist, remote: &Playlist) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::traits::ListItem;
 
     #[test]
     fn library_offline_loads_nothing() {
@@ -1449,13 +1493,69 @@ mod tests {
         Library::new_for_test(ev, spotify, cfg)
     }
 
+    const SC_URL: &str = "https://soundcloud.com/forss";
+
+    /// Con el perfil `SC_URL` guardado (dentro de `test_sandbox`).
+    fn sc_test_library() -> Arc<Library> {
+        sc_library::set_profile(Some(SC_URL)).unwrap();
+        test_library()
+    }
+
+    #[test]
+    fn sc_stale_result_is_dropped() {
+        let (_g, _d) = crate::config::test_sandbox();
+        let lib = sc_test_library();
+        let g = lib.generation();
+        // perfil cambiado o quitado mientras bajaba
+        lib.apply_sc_result("https://soundcloud.com/otro", Ok((vec![sc_track("1")], vec![sc_playlist("p")])));
+        sc_library::set_profile(None).unwrap();
+        lib.apply_sc_result(SC_URL, Ok((vec![sc_track("1")], vec![])));
+        assert!(lib.sc_tracks.read().unwrap().is_empty());
+        assert!(lib.sc_playlists.read().unwrap().is_empty());
+        assert!(!config::cache_path(CACHE_SC_TRACKS).exists());
+        assert_eq!(lib.generation(), g);
+    }
+
+    #[test]
+    fn clear_soundcloud_removes_cache_files() {
+        let (_g, _d) = crate::config::test_sandbox();
+        let lib = sc_test_library();
+        lib.apply_sc_result(SC_URL, Ok((vec![sc_track("1")], vec![sc_playlist("p")])));
+        assert!(config::cache_path(CACHE_SC_TRACKS).exists());
+        remove_sc_cache();
+        assert!(!config::cache_path(CACHE_SC_TRACKS).exists());
+        assert!(!config::cache_path(CACHE_SC_PLAYLISTS).exists());
+    }
+
+    #[test]
+    fn sc_visibility_change_bumps_generation() {
+        let (_g, _d) = crate::config::test_sandbox();
+        let lib = test_library();
+        let g = lib.generation();
+        lib.sc_visibility_changed(); // sin perfil: no descarga, pero sí recalcula
+        assert!(lib.generation() > g);
+    }
+
+    #[test]
+    fn sc_playlist_has_no_share_url() {
+        assert_eq!(sc_playlist("p").share_url(), None);
+    }
+
+    #[test]
+    fn append_or_update_bumps_generation() {
+        let lib = test_library();
+        let g = lib.generation();
+        lib.append_or_update(playlist("a", 0, None), false);
+        assert!(lib.generation() > g);
+    }
+
     #[test]
     fn sc_failed_update_keeps_previous() {
         let (_g, _d) = crate::config::test_sandbox();
-        let lib = test_library();
-        lib.apply_sc_result(Ok((vec![sc_track("1")], vec![sc_playlist("p")])));
+        let lib = sc_test_library();
+        lib.apply_sc_result(SC_URL, Ok((vec![sc_track("1")], vec![sc_playlist("p")])));
         let g = lib.generation();
-        lib.apply_sc_result(Err("red".into()));
+        lib.apply_sc_result(SC_URL, Err("red".into()));
         assert_eq!(lib.sc_tracks.read().unwrap().len(), 1);
         assert_eq!(lib.sc_playlists.read().unwrap().len(), 1);
         assert_eq!(lib.generation(), g);
@@ -1464,8 +1564,8 @@ mod tests {
     #[test]
     fn sc_track_is_saved_without_spotify() {
         let (_g, _d) = crate::config::test_sandbox();
-        let lib = test_library();
-        lib.apply_sc_result(Ok((vec![sc_track("1")], vec![])));
+        let lib = sc_test_library();
+        lib.apply_sc_result(SC_URL, Ok((vec![sc_track("1")], vec![])));
         assert!(lib.is_saved_track(&Playable::Track(sc_track("1"))));
         assert!(!lib.is_saved_track(&Playable::Track(sc_track("2"))));
     }
@@ -1486,8 +1586,8 @@ mod tests {
     #[test]
     fn clear_soundcloud_empties_and_bumps() {
         let (_g, _d) = crate::config::test_sandbox();
-        let lib = test_library();
-        lib.apply_sc_result(Ok((vec![sc_track("1")], vec![sc_playlist("p")])));
+        let lib = sc_test_library();
+        lib.apply_sc_result(SC_URL, Ok((vec![sc_track("1")], vec![sc_playlist("p")])));
         let g = lib.generation();
         lib.clear_soundcloud();
         assert!(lib.sc_tracks.read().unwrap().is_empty());

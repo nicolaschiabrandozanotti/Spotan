@@ -40,13 +40,24 @@ const BTN_SC_REMOVE: &str = "settings_btn_sc_remove";
 /// Marker left in the start screen's user data by "Entrar sin Spotify".
 pub struct EnterWithoutSpotify;
 
+/// Cambio de SoundCloud que la aplicación debe reflejar en la biblioteca.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ScChange {
+    /// Se cargó un perfil: bajar su biblioteca.
+    Loaded,
+    /// Se quitó el perfil: vaciar lo de SoundCloud y su caché.
+    Removed,
+    /// Se prendió o apagó el servicio: recalcular las vistas.
+    Toggled,
+}
+
 /// "Entrar sin Spotify" needs at least one external service on.
 pub fn can_enter_without_spotify(services: &[Source]) -> bool {
     !services.is_empty()
 }
 
 /// A service checkbox: toggling it saves right away and refreshes the enter button.
-fn service_checkbox(source: Source, label: &str) -> LinearLayout {
+fn service_checkbox(source: Source, label: &str, on_sc_change: Arc<dyn Fn(ScChange) + Send + Sync>) -> LinearLayout {
     let on = crate::external::enabled().contains(&source);
     LinearLayout::horizontal()
         .child(Checkbox::new().with_checked(on).on_change(move |s, on| {
@@ -58,6 +69,7 @@ fn service_checkbox(source: Source, label: &str) -> LinearLayout {
             s.call_on_name(BTN_ENTER, |b: &mut Button| b.set_enabled(can));
             if source == Source::SoundCloud {
                 set_sc_enabled(s, on);
+                on_sc_change(ScChange::Toggled);
             }
         }))
         .child(TextView::new(format!(" {label}")))
@@ -78,7 +90,7 @@ fn sc_status_text(r: &Result<ScUser, String>) -> String {
     }
 }
 
-fn load_sc_profile(s: &mut Cursive, on_change: Arc<dyn Fn(bool) + Send + Sync>) {
+fn load_sc_profile(s: &mut Cursive, on_change: Arc<dyn Fn(ScChange) + Send + Sync>) {
     let input = s.call_on_name(SC_PROFILE, |v: &mut EditView| v.get_content()).unwrap_or_default();
     let Some(url) = sc_library::normalize_profile(&input) else {
         return set_text(s, SC_STATUS, "Error: Eso no parece un perfil de SoundCloud".into());
@@ -91,23 +103,32 @@ fn load_sc_profile(s: &mut Cursive, on_change: Arc<dyn Fn(bool) + Send + Sync>) 
     std::thread::spawn(move || {
         let result = sc_library::resolve(&url);
         let _ = sink.send(Box::new(move |s| {
-            set_sc_enabled(s, true);
+            // SoundCloud pudo apagarse mientras cargaba.
+            let still_on = crate::external::enabled().contains(&Source::SoundCloud);
+            set_sc_enabled(s, still_on);
             // Only a profile that resolved gets saved.
+            let previous = sc_library::profile();
             let result = result.and_then(|u| sc_library::set_profile(Some(&url)).map(|()| u));
             set_text(s, SC_STATUS, sc_status_text(&result));
-            if result.is_ok() {
-                on_change(true);
+            if result.is_ok() && still_on {
+                // otro perfil: lo del anterior no se queda mostrando
+                if previous.is_some_and(|p| p != url) {
+                    on_change(ScChange::Removed);
+                }
+                on_change(ScChange::Loaded);
             }
         }));
     });
 }
 
-fn remove_sc_profile(s: &mut Cursive, on_change: &dyn Fn(bool)) {
+fn remove_sc_profile(s: &mut Cursive, on_change: &dyn Fn(ScChange)) {
     match sc_library::set_profile(None) {
         Ok(()) => {
+            // en la pantalla de inicio no hay Library que lo haga
+            crate::library::remove_sc_cache();
             s.call_on_name(SC_PROFILE, |v: &mut EditView| v.set_content(""));
             set_text(s, SC_STATUS, String::new());
-            on_change(false);
+            on_change(ScChange::Removed);
         }
         Err(e) => set_text(s, SC_STATUS, format!("Error: {e}")),
     }
@@ -249,9 +270,9 @@ impl SettingsView {
         mode: SettingsMode,
         account: Option<String>,
         on_logged_in: Box<dyn Fn(RespotCredentials) -> Result<(), String> + Send + Sync>,
-        on_sc_change: Box<dyn Fn(bool) + Send + Sync>,
+        on_sc_change: Box<dyn Fn(ScChange) + Send + Sync>,
     ) -> Self {
-        let on_sc_change: Arc<dyn Fn(bool) + Send + Sync> = Arc::from(on_sc_change);
+        let on_sc_change: Arc<dyn Fn(ScChange) + Send + Sync> = Arc::from(on_sc_change);
         let on_logged_in: Arc<dyn Fn(RespotCredentials) -> Result<(), String> + Send + Sync> = Arc::from(on_logged_in);
         let start = mode == SettingsMode::Start;
         let mut layout = LinearLayout::vertical()
@@ -312,8 +333,8 @@ impl SettingsView {
         }
         layout.add_child(DummyView);
         layout.add_child(TextView::new(heading("Otros servicios")));
-        layout.add_child(service_checkbox(Source::YouTube, "YouTube"));
-        layout.add_child(service_checkbox(Source::SoundCloud, "SoundCloud"));
+        layout.add_child(service_checkbox(Source::YouTube, "YouTube", on_sc_change.clone()));
+        layout.add_child(service_checkbox(Source::SoundCloud, "SoundCloud", on_sc_change.clone()));
         let sc_on = crate::external::enabled().contains(&Source::SoundCloud);
         let (load_cb, remove_cb) = (on_sc_change.clone(), on_sc_change);
         let mut load = Button::new("Cargar", move |s| load_sc_profile(s, load_cb.clone()));
