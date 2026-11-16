@@ -1,0 +1,72 @@
+{
+ "playabilityStatus": {
+  "status": "OK"
+ },
+ "streamingData": {
+  "expiresInSeconds": "21540",
+  "adaptiveFormats": [
+   {
+    "itag": 136,
+    "mimeType": "video/mp4; codecs=\"avc1.4d401f\"",
+    "bitrate": 1000000,
+    "url": "https://example.invalid/videoplayback?itag=136"
+   },
+   {
+    "itag": 139,
+    "mimeType": "audio/mp4; codecs=\"mp4a.40.5\"",
+    "bitrate": 54791,
+    "contentLength": "2193442",
+    "approxDurationMs": "359584",
+    "audioSampleRate": "22050",
+    "audioChannels": 2,
+    "url": "https://example.invalid/videoplayback?itag=139"
+   },
+   {
+    "itag": 140,
+    "mimeType": "audio/mp4; codecs=\"mp4a.40.2\"",
+    "bitrate": 148695,
+    "contentLength": "5818745",
+    "approxDurationMs": "359491",
+    "audioSampleRate": "44100",
+    "audioChannels": 2,
+    "url": "https://example.invalid/videoplayback?itag=140"
+   },
+   {
+    "itag": 249,
+    "mimeType": "audio/webm; codecs=\"opus\"",
+    "bitrate": 57404,
+    "contentLength": "2306373",
+    "approxDurationMs": "359461",
+    "audioSampleRate": "48000",
+    "audioChannels": 2,
+    "url": "https://example.invalid/videoplayback?itag=249"
+   },
+   {
+    "itag": 250,
+    "mimeType": "audio/webm; codecs=\"opus\"",
+    "bitrate": 76732,
+    "contentLength": "3050692",
+    "approxDurationMs": "359461",
+    "audioSampleRate": "48000",
+    "audioChannels": 2,
+    "url": "https://example.invalid/videoplayback?itag=250"
+   },
+   {
+    "itag": 251,
+    "mimeType": "audio/webm; codecs=\"opus\"",
+    "bitrate": 148424,
+    "contentLength": "5956710",
+    "approxDurationMs": "359461",
+    "audioSampleRate": "48000",
+    "audioChannels": 2,
+    "url": "https://example.invalid/videoplayback?itag=251"
+   }
+  ]
+ },
+ "videoDetails": {
+  "videoId": "fJ9rUzIMcZQ",
+  "title": "Queen – Bohemian Rhapsody (Official Video Remastered)",
+  "author": "Queen Official",
+  "lengthSeconds": "359"
+ }
+}
