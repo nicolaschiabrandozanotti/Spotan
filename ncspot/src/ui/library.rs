@@ -34,7 +34,7 @@ fn new_bar(active: Vec<Source>, recompute: &Arc<dyn Fn(&HashSet<Source>) + Send 
 fn hint_for(online: bool, sc_active: bool, tab: &str) -> Option<&'static str> {
     if !online && !sc_active {
         Some(NO_SOURCE_HINT)
-    } else if !online && !matches!(tab, "Tracks" | "Playlists") {
+    } else if !online && !matches!(tab, "Tracks" | "Albums" | "Playlists") {
         Some(OFFLINE_HINT)
     } else {
         None
@@ -132,7 +132,7 @@ impl LibraryView {
                 ),
                 LibraryTab::Albums => tabview.add_tab(
                     "Albums",
-                    ListView::new(library.albums.clone(), queue.clone(), library.clone()),
+                    mixed_list(queue.clone(), library.clone(), library.albums.clone(), library.sc_albums.clone()),
                 ),
                 LibraryTab::Artists => tabview.add_tab(
                     "Artists",
@@ -213,7 +213,9 @@ mod tests {
         assert_eq!(hint_for(false, false, "Tracks"), Some(NO_SOURCE_HINT));
         assert_eq!(hint_for(false, true, "Tracks"), None);
         assert_eq!(hint_for(false, true, "Playlists"), None);
-        assert_eq!(hint_for(false, true, "Albums"), Some(OFFLINE_HINT));
+        assert_eq!(hint_for(false, true, "Albums"), None);
+        assert_eq!(hint_for(false, true, "Artists"), Some(OFFLINE_HINT));
+        assert_eq!(hint_for(false, false, "Albums"), Some(NO_SOURCE_HINT));
         assert_eq!(hint_for(true, false, "Albums"), None);
     }
 }
