@@ -1471,19 +1471,16 @@ mod tests {
     }
 
     #[test]
-    fn sc_playlist_unsave_is_noop() {
-        use crate::traits::ListItem;
+    fn sc_playlist_is_read_only_and_keeps_tracks() {
         let (_g, _d) = crate::config::test_sandbox();
         let lib = test_library();
-        *lib.is_done.write().unwrap() = true;
-        lib.playlists.write().unwrap().push(Playlist {
-            id: "p".to_string(),
-            ..playlist("", 0, None)
-        });
-        let mut p = sc_playlist("p");
-        p.unsave(&lib);
-        p.toggle_saved(&lib);
-        assert_eq!(lib.playlists.read().unwrap().len(), 1);
+        let mut sc = sc_playlist("p");
+        sc.tracks = Some(vec![Playable::Track(sc_track("1"))]);
+        assert!(sc.is_read_only());
+        assert!(!playlist("", 0, None).is_read_only());
+        let spotify = Spotify::new_for_test(lib.cfg.clone(), EventManager::new_for_test());
+        assert!(!sc.delete_track(0, spotify, &lib));
+        assert_eq!(sc.tracks.as_ref().unwrap().len(), 1);
     }
 
     #[test]

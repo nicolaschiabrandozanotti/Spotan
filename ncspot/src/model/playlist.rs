@@ -32,6 +32,11 @@ pub struct Playlist {
 }
 
 impl Playlist {
+    /// Lo de SoundCloud no se puede modificar desde Spotan.
+    pub fn is_read_only(&self) -> bool {
+        self.source != Source::Spotify
+    }
+
     /// Whether the tracks are loaded. Empty tracks with a non-zero count failed to load.
     pub fn is_loaded(&self) -> bool {
         self.tracks
@@ -76,7 +81,7 @@ impl Playlist {
     }
 
     pub fn delete_track(&mut self, index: usize, spotify: Spotify, library: &Library) -> bool {
-        if self.source != Source::Spotify {
+        if self.is_read_only() {
             return false;
         }
         let Some(playable) = self.tracks.as_ref().and_then(|t| t.get(index)).cloned() else {
@@ -107,7 +112,7 @@ impl Playlist {
     }
 
     pub fn append_tracks(&mut self, new_tracks: &[Playable], spotify: &Spotify, library: &Library) {
-        if self.source != Source::Spotify {
+        if self.is_read_only() {
             return;
         }
         let mut has_modified = false;
@@ -235,7 +240,7 @@ impl ListItem for Playlist {
     }
 
     fn display_right(&self, library: &Library) -> String {
-        if self.source != Source::Spotify {
+        if self.is_read_only() {
             let num_tracks = self.tracks.as_ref().map_or(self.num_tracks, |t| t.len());
             return format!("[{}] {num_tracks:>4} tracks", self.source.label());
         }
@@ -287,7 +292,7 @@ impl ListItem for Playlist {
     }
 
     fn toggle_saved(&mut self, library: &Library) {
-        if self.source != Source::Spotify {
+        if self.is_read_only() {
             return;
         }
         // Don't allow users to unsave their own playlists with one keypress
@@ -303,14 +308,14 @@ impl ListItem for Playlist {
     }
 
     fn save(&mut self, library: &Library) {
-        if self.source != Source::Spotify {
+        if self.is_read_only() {
             return;
         }
         library.follow_playlist(self.clone());
     }
 
     fn unsave(&mut self, library: &Library) {
-        if self.source != Source::Spotify {
+        if self.is_read_only() {
             return;
         }
         library.delete_playlist(&self.id);
@@ -373,7 +378,7 @@ impl ListItem for Playlist {
     }
 
     fn is_saved(&self, library: &Library) -> Option<bool> {
-        if self.source != Source::Spotify {
+        if self.is_read_only() {
             return None;
         }
         // save status of personal playlists can't be toggled for safety

@@ -65,7 +65,7 @@ impl ViewExt for PlaylistsView {
                 .read()
                 .unwrap()
                 .get(self.list.get_selected_index())
-                .is_some_and(|p| p.source != crate::model::track::Source::Spotify);
+                .is_some_and(|p| p.is_read_only());
             if is_sc {
                 return Err("SoundCloud: solo lectura".into());
             }
