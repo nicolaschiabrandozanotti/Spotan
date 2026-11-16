@@ -82,6 +82,16 @@ impl<I: ListItem + Clone> ListView<I> {
         result
     }
 
+    /// Lista que se está mostrando ahora.
+    pub fn content(&self) -> &Arc<RwLock<Vec<I>>> {
+        &self.content
+    }
+
+    /// Cambia la lista mostrada (la selección se mantiene, el llamador la acota).
+    pub fn set_content(&mut self, content: Arc<RwLock<Vec<I>>>) {
+        self.content = content;
+    }
+
     pub fn with_title(mut self, title: &str) -> Self {
         self.title = title.to_string();
         self

@@ -40,46 +40,62 @@ fn hint_for(online: bool, sc_active: bool, tab: &str) -> Option<&'static str> {
     }
 }
 
-/// Lista de la biblioteca con Spotify y SoundCloud mezclados; devuelve también la lista
-/// derivada que muestra. Se recalcula al cambiar el filtro o `library.generation()`.
+/// Sin SoundCloud la lista muestra el `Arc` de Spotify tal cual, sin copia derivada (RAM).
+fn show_spotify_directly(active: &[Source]) -> bool {
+    !active.contains(&Source::SoundCloud)
+}
+
+/// Lista de la biblioteca con Spotify y SoundCloud mezclados. Se recalcula al cambiar el
+/// filtro o `library.generation()`; con SoundCloud inactivo no hay copia.
 pub fn mixed_list<T: ListItem + Sourced + Clone>(
     queue: Arc<Queue>,
     library: Arc<Library>,
     spotify: Arc<RwLock<Vec<T>>>,
     sc: Arc<RwLock<Vec<T>>>,
-) -> (FilteredList<T>, Arc<RwLock<Vec<T>>>) {
+) -> FilteredList<T> {
     let shown = Arc::new(RwLock::new(Vec::new()));
     let recompute: Arc<dyn Fn(&HashSet<Source>) + Send + Sync> = {
-        let shown = shown.clone();
+        let (shown, spotify, sc) = (shown.clone(), spotify.clone(), sc.clone());
         Arc::new(move |on| {
-            let mut all = spotify.read().unwrap().clone();
-            all.extend(sc.read().unwrap().iter().cloned());
-            *shown.write().unwrap() = merge_and_filter(&all, on);
+            // cada almacén tiene un solo servicio: el orden se conserva al concatenar
+            let mut v = merge_and_filter(&spotify.read().unwrap(), on);
+            v.extend(merge_and_filter(&sc.read().unwrap(), on));
+            *shown.write().unwrap() = v;
         })
     };
-    let bar = new_bar(library_sources(&library), &recompute);
-    recompute(bar.on());
-    let mut tab = FilteredList::new(bar, ListView::new(shown.clone(), queue, library.clone()));
-    let shown2 = shown.clone();
+    let active = library_sources(&library);
+    let bar = new_bar(active.clone(), &recompute);
+    let content = if show_spotify_directly(&active) {
+        spotify.clone()
+    } else {
+        recompute(bar.on());
+        shown.clone()
+    };
+    let mut tab = FilteredList::new(bar, ListView::new(content, queue, library.clone()));
     let mut seen = library.generation();
-    let recompute2 = recompute.clone();
     tab.on_layout = Some(Box::new(move |bar, list| {
         let generation = library.generation();
         if generation != seen {
             seen = generation;
             let active = library_sources(&library);
             if active != bar.active() {
-                *bar = new_bar(active, &recompute2);
+                *bar = new_bar(active.clone(), &recompute);
             }
-            recompute2(bar.on());
+            if show_spotify_directly(&active) {
+                *shown.write().unwrap() = Vec::new();
+                list.set_content(spotify.clone());
+            } else {
+                recompute(bar.on());
+                list.set_content(shown.clone());
+            }
         }
         // la lista pudo achicarse: la selección no se pasa del final
         let sel = list.get_selected_index();
-        if sel > 0 && sel >= shown2.read().unwrap().len() {
+        if sel > 0 && sel >= list.content().read().unwrap().len() {
             list.move_focus_to(sel);
         }
     }));
-    (tab, shown)
+    tab
 }
 
 pub struct LibraryView {
@@ -102,7 +118,7 @@ impl LibraryView {
             match tab {
                 LibraryTab::Tracks => tabview.add_tab(
                     "Tracks",
-                    mixed_list(queue.clone(), library.clone(), library.tracks.clone(), library.sc_tracks.clone()).0,
+                    mixed_list(queue.clone(), library.clone(), library.tracks.clone(), library.sc_tracks.clone()),
                 ),
                 LibraryTab::Albums => tabview.add_tab(
                     "Albums",
@@ -139,7 +155,9 @@ impl ViewWrapper for LibraryView {
 
     fn wrap_draw(&self, printer: &cursive::Printer) {
         self.tabs.draw(printer);
-        let hint = hint_for(self.library.is_online(), self.library.sc_active(), self.tabs.selected_name());
+        // sc_active lee el perfil de disco: solo se consulta sin sesión de Spotify
+        let online = self.library.is_online();
+        let hint = hint_for(online, !online && self.library.sc_active(), self.tabs.selected_name());
         if let Some(hint) = hint {
             printer.print((1, 3), hint);
         }
@@ -163,6 +181,14 @@ impl ViewExt for LibraryView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spotify_list_is_shown_directly_without_soundcloud() {
+        assert!(show_spotify_directly(&[]));
+        assert!(show_spotify_directly(&[Source::Spotify]));
+        assert!(!show_spotify_directly(&[Source::SoundCloud]));
+        assert!(!show_spotify_directly(&[Source::Spotify, Source::SoundCloud]));
+    }
 
     #[test]
     fn hint_depends_on_internal_tab_name() {

@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use cursive::Cursive;
 use cursive::view::{Margins, ViewWrapper};
@@ -16,20 +16,17 @@ use crate::ui::source_filter::FilteredList;
 
 pub struct PlaylistsView {
     list: FilteredList<Playlist>,
-    /// Lista derivada (Spotify + SoundCloud filtrados): la selección se resuelve acá.
-    shown: Arc<RwLock<Vec<Playlist>>>,
     library: Arc<Library>,
 }
 
 impl PlaylistsView {
     pub fn new(queue: Arc<Queue>, library: Arc<Library>) -> Self {
-        let (list, shown) =
-            mixed_list(queue, library.clone(), library.playlists.clone(), library.sc_playlists.clone());
-        Self { list, shown, library }
+        let list = mixed_list(queue, library.clone(), library.playlists.clone(), library.sc_playlists.clone());
+        Self { list, library }
     }
 
     pub fn delete_dialog(&mut self) -> Option<Modal<Dialog>> {
-        let playlists = self.shown.read().unwrap();
+        let playlists = self.list.list.content().read().unwrap();
         let current = playlists.get(self.list.list.get_selected_index());
 
         if let Some(playlist) = current {
@@ -62,7 +59,9 @@ impl ViewExt for PlaylistsView {
     fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
         if let Command::Delete = cmd {
             let is_sc = self
-                .shown
+                .list
+                .list
+                .content()
                 .read()
                 .unwrap()
                 .get(self.list.list.get_selected_index())
