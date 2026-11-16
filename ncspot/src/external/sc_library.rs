@@ -5,8 +5,10 @@ use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde_json::Value;
+use url::Url;
 
-use super::soundcloud::parse_track;
+use super::soundcloud::{api, get_json, parse_track, ScError, API};
+use crate::config::config_path;
 use crate::model::playlist::Playlist;
 use crate::model::track::{Source, Track};
 
@@ -104,6 +106,89 @@ pub fn parse_tracks(json: &Value) -> Vec<Track> {
     json.as_array().into_iter().flatten().filter_map(parse_track).collect()
 }
 
+const PROFILE_FILE: &str = "soundcloud_profile";
+const MAX_PAGES: usize = 100;
+
+pub struct ScUser {
+    pub id: u64,
+    pub username: String,
+    pub likes: u64,
+    pub playlists: u64,
+}
+
+pub fn resolve(profile_url: &str) -> Result<ScUser, String> {
+    let json = api(|cid| {
+        let mut u = Url::parse(&format!("{API}/resolve")).expect("url");
+        u.query_pairs_mut().append_pair("url", profile_url).append_pair("client_id", cid);
+        get_json(u.as_str()).map_err(|e| match e {
+            ScError::NotFound => ScError::Other("No existe ese perfil de SoundCloud".into()),
+            e => e,
+        })
+    })?;
+    Ok(ScUser {
+        id: json["id"].as_u64().ok_or("SoundCloud no devolvió el usuario")?,
+        username: json["username"].as_str().unwrap_or_default().to_string(),
+        likes: json["likes_count"].as_u64().unwrap_or(0),
+        playlists: json["playlist_count"].as_u64().unwrap_or(0),
+    })
+}
+
+fn get(url: &str) -> Result<Value, String> {
+    api(|cid| get_json(&format!("{url}{}client_id={cid}", if url.contains('?') { "&" } else { "?" })))
+}
+
+/// Todas las páginas de un listado; si una falla o `next_href` no termina, error (nada parcial).
+fn all_pages<T>(first: String, parse: impl Fn(&Value) -> (Vec<T>, Option<String>)) -> Result<Vec<T>, String> {
+    let (mut out, mut url) = (Vec::new(), first);
+    for _ in 0..MAX_PAGES {
+        let (items, next) = parse(&get(&url)?);
+        out.extend(items);
+        match next {
+            Some(n) => url = n,
+            None => return Ok(out),
+        }
+    }
+    Err("SoundCloud devolvió demasiadas páginas".into())
+}
+
+pub fn fetch_library(user_id: u64) -> Result<(Vec<Track>, Vec<Playlist>), String> {
+    let list = |what: &str| format!("{API}/users/{user_id}/{what}?limit=200&linked_partitioning=1");
+    let likes = all_pages(list("track_likes"), parse_track_likes)?;
+    let own = all_pages(list("playlists"), parse_playlists)?;
+    let saved = all_pages(list("likes"), parse_liked_playlists)?;
+    Ok((likes, merge_playlists(own, saved)))
+}
+
+pub fn fetch_playlist_tracks(id: &str) -> Result<Vec<Track>, String> {
+    let (order, mut known) = playlist_order(&get(&format!("{API}/playlists/{id}"))?);
+    let have: HashSet<_> = known.iter().filter_map(|t| t.id.clone()).collect();
+    let missing: Vec<_> = order.iter().filter(|i| !have.contains(*i)).cloned().collect();
+    for batch in missing.chunks(50) {
+        known.extend(parse_tracks(&get(&format!("{API}/tracks?ids={}", batch.join(",")))?));
+    }
+    Ok(order_tracks(&order, known))
+}
+
+fn profile_path() -> std::path::PathBuf {
+    config_path(PROFILE_FILE)
+}
+
+pub fn profile() -> Option<String> {
+    std::fs::read_to_string(profile_path()).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// `None` borra el archivo.
+pub fn set_profile(url: Option<&str>) -> Result<(), String> {
+    let path = profile_path();
+    match url {
+        Some(u) => std::fs::write(path, u).map_err(|e| e.to_string()),
+        None => match std::fs::remove_file(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,6 +278,29 @@ mod tests {
         let t = order_tracks(&order, known); // sin completar los 2 stubs
         assert_eq!(t.len(), 5);
         assert_eq!(t.iter().map(|t| t.id.clone().unwrap()).collect::<Vec<_>>(), order[..5]);
+    }
+
+    #[test]
+    fn profile_roundtrip() {
+        let (_g, _d) = crate::config::test_sandbox();
+        assert_eq!(profile(), None);
+        set_profile(Some("https://soundcloud.com/forss")).unwrap();
+        assert_eq!(profile().as_deref(), Some("https://soundcloud.com/forss"));
+        set_profile(None).unwrap();
+        assert_eq!(profile(), None);
+        set_profile(None).unwrap(); // borrar sin archivo no es error
+    }
+
+    /// Red real: lo corre el usuario con `docs/superpowers/scripts/sc-fetch.sh`.
+    #[test]
+    #[ignore]
+    fn sc_live_forss() {
+        let u = resolve("https://soundcloud.com/forss").unwrap();
+        assert!(resolve("https://soundcloud.com/zzz-no-existe-9f3a1c").is_err());
+        let (likes, playlists) = fetch_library(u.id).unwrap();
+        println!("{} ({}): {} likes, {} playlists", u.username, u.id, likes.len(), playlists.len());
+        assert!(likes.len() >= 200 && playlists.len() >= 4);
+        assert_eq!(fetch_playlist_tracks("2050462").unwrap().len(), 7);
     }
 
     #[test]

@@ -14,14 +14,15 @@ use crate::model::track::{Source, Track};
 
 // Todo lo que SoundCloud puede romper vive acá (verificado el 2026-11-16).
 const HOME: &str = "https://soundcloud.com/";
-const API: &str = "https://api-v2.soundcloud.com";
+pub(super) const API: &str = "https://api-v2.soundcloud.com";
 const SCRIPT_RE: &str = r#"https://a-v2\.sndcdn\.com/assets/[^"'\s]+\.js"#;
 const CLIENT_ID_RE: &str = r#"client_id\s*:\s*"([0-9a-zA-Z]{32})""#;
 const PRESETS: [&str; 2] = ["aac_160k", "aac_96k"];
 const CACHE_FILE: &str = "soundcloud_client_id";
 
-pub enum ScError {
+pub(super) enum ScError {
     Unauthorized,
+    NotFound,
     Other(String),
 }
 
@@ -84,9 +85,11 @@ fn with_client_id<T>(
     match get(&cid) {
         Err(ScError::Unauthorized) => match get(&refresh()?) {
             Err(ScError::Unauthorized) => Err("SoundCloud rechazó el client_id".into()),
+            Err(ScError::NotFound) => Err("SoundCloud respondió 404".into()),
             Err(ScError::Other(e)) => Err(e),
             Ok(v) => Ok(v),
         },
+        Err(ScError::NotFound) => Err("SoundCloud respondió 404".into()),
         Err(ScError::Other(e)) => Err(e),
         Ok(v) => Ok(v),
     }
@@ -117,16 +120,17 @@ fn refresh_client_id() -> Result<String, String> {
     Err("no se encontró el client_id de SoundCloud".into())
 }
 
-fn get_json(url: &str) -> Result<Value, ScError> {
+pub(super) fn get_json(url: &str) -> Result<Value, ScError> {
     let resp = http().get(url).send().map_err(|e| ScError::Other(e.to_string()))?;
     match resp.status().as_u16() {
         401 | 403 => Err(ScError::Unauthorized),
+        404 => Err(ScError::NotFound),
         s if s >= 400 => Err(ScError::Other(format!("SoundCloud respondió {s}"))),
         _ => resp.json().map_err(|e| ScError::Other(e.to_string())),
     }
 }
 
-fn api<T>(f: impl Fn(&str) -> Result<T, ScError>) -> Result<T, String> {
+pub(super) fn api<T>(f: impl Fn(&str) -> Result<T, ScError>) -> Result<T, String> {
     with_client_id(stored_client_id(), f, refresh_client_id)
 }
 

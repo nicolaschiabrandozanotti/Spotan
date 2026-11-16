@@ -302,18 +302,9 @@ fn to_rspotify(tokens: LoginTokens, fallback_refresh_token: Option<&str>) -> rsp
 mod test {
     use super::*;
     use crate::oauth_login::LoginTokens;
-    use std::sync::Mutex;
     use std::time::Duration;
 
-    // The configuration base path is global, so tests touching it run one at a time.
-    static LOCK: Mutex<()> = Mutex::new(());
-
-    fn sandbox() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
-        let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().unwrap();
-        config::set_configuration_base_path(Some(dir.path().to_path_buf()));
-        (guard, dir)
-    }
+    use crate::config::test_sandbox as sandbox;
 
     fn tokens(refresh_token: &str) -> LoginTokens {
         LoginTokens {

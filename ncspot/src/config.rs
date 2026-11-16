@@ -419,6 +419,16 @@ pub fn set_configuration_base_path(base_path: Option<PathBuf>) {
     }
 }
 
+/// The configuration base path is global, so tests touching it share this lock and run one at a time.
+#[cfg(test)]
+pub(crate) fn test_sandbox() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    set_configuration_base_path(Some(dir.path().to_path_buf()));
+    (guard, dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::UserState;
