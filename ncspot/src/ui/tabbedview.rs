@@ -100,6 +100,11 @@ impl TabbedView {
         self.selected == self.len().saturating_sub(1)
     }
 
+    /// Nombre interno de la pestaña (sin traducir).
+    pub fn selected_name(&self) -> &str {
+        self.tabs.get(self.selected).map_or("", |tab| tab.name())
+    }
+
     pub fn selected_title(&self) -> &str {
         self.tabs.get(self.selected).map(|tab|display_name(tab.name())).unwrap_or("")
     }

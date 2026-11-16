@@ -29,6 +29,17 @@ fn new_bar(active: Vec<Source>, recompute: &Arc<dyn Fn(&HashSet<Source>) + Send 
     bar
 }
 
+/// Aviso de sesión según el nombre interno de la pestaña (no el traducido).
+fn hint_for(online: bool, sc_active: bool, tab: &str) -> Option<&'static str> {
+    if !online && !sc_active {
+        Some(NO_SOURCE_HINT)
+    } else if !online && !matches!(tab, "Tracks" | "Playlists") {
+        Some(OFFLINE_HINT)
+    } else {
+        None
+    }
+}
+
 /// Lista de la biblioteca con Spotify y SoundCloud mezclados; devuelve también la lista
 /// derivada que muestra. Se recalcula al cambiar el filtro o `library.generation()`.
 pub fn mixed_list<T: ListItem + Sourced + Clone>(
@@ -128,12 +139,9 @@ impl ViewWrapper for LibraryView {
 
     fn wrap_draw(&self, printer: &cursive::Printer) {
         self.tabs.draw(printer);
-        let online = self.library.is_online();
-        let sc = self.library.sc_active();
-        if !online && !sc {
-            printer.print((1, 3), NO_SOURCE_HINT);
-        } else if !online && !matches!(self.tabs.selected_title(), "Tracks" | "Playlists") {
-            printer.print((1, 3), OFFLINE_HINT);
+        let hint = hint_for(self.library.is_online(), self.library.sc_active(), self.tabs.selected_name());
+        if let Some(hint) = hint {
+            printer.print((1, 3), hint);
         }
     }
 }
@@ -149,5 +157,19 @@ impl ViewExt for LibraryView {
 
     fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
         self.tabs.on_command(s, cmd)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hint_depends_on_internal_tab_name() {
+        assert_eq!(hint_for(false, false, "Tracks"), Some(NO_SOURCE_HINT));
+        assert_eq!(hint_for(false, true, "Tracks"), None);
+        assert_eq!(hint_for(false, true, "Playlists"), None);
+        assert_eq!(hint_for(false, true, "Albums"), Some(OFFLINE_HINT));
+        assert_eq!(hint_for(true, false, "Albums"), None);
     }
 }
