@@ -17,6 +17,7 @@ use super::stream::{to_stereo, resample_to_44100, Decoding, FetchError, HlsSourc
 use super::{http, soundcloud, youtube};
 use crate::events::{Event, EventManager};
 use crate::model::track::{Source, Track};
+use crate::queue::QueueEvent;
 use crate::spotify::PlayerEvent;
 
 pub enum ExtCmd {
@@ -43,7 +44,8 @@ struct Inner {
 }
 
 impl ExternalPlayer {
-    pub fn send(&self, cmd: ExtCmd) {
+    /// False if the engine thread is gone (the command was not delivered).
+    pub fn send(&self, cmd: ExtCmd) -> bool {
         // Load y Stop invalidan todo lo que el tema anterior todavía pueda emitir
         let g = &self.inner.generation;
         let epoch = if matches!(cmd, ExtCmd::Load { .. } | ExtCmd::Stop) {
@@ -51,7 +53,7 @@ impl ExternalPlayer {
         } else {
             g.load(Ordering::SeqCst)
         };
-        let _ = self.inner.tx.send((epoch, cmd));
+        self.inner.tx.send((epoch, cmd)).is_ok()
     }
 }
 
@@ -221,9 +223,14 @@ impl Worker {
         }
     }
 
-    fn fail(&mut self, source: Source) {
+    /// `uri`: the failed track; if None, the current one. The queue drops it so repeat can't retry forever.
+    fn fail(&mut self, source: Source, uri: Option<String>) {
         if !self.stale() {
             self.events.notify(format!("{}: no se pudo reproducir", source.name()));
+            let uri = uri.or_else(|| self.current.as_ref().map(|c| c.track.uri.clone()));
+            if let Some(uri) = uri {
+                self.events.send(Event::Queue(QueueEvent::TrackFailed(uri)));
+            }
         }
         self.finish();
     }
@@ -242,7 +249,7 @@ impl Worker {
                 self.current = None;
                 self.playing = false;
                 self.my_gen = epoch;
-                let source = track.source;
+                let (source, uri) = (track.source, track.uri.clone());
                 match self.open(track, position_ms) {
                     Ok(cur) if !self.stale() => {
                         self.current = Some(cur);
@@ -250,7 +257,7 @@ impl Worker {
                         self.emit_state();
                     }
                     Ok(_) => {}
-                    Err(_) => self.fail(source),
+                    Err(_) => self.fail(source, Some(uri)),
                 }
             }
             ExtCmd::Play => {
@@ -274,13 +281,13 @@ impl Worker {
             }
             ExtCmd::Seek(ms) => {
                 if let Some(mut cur) = self.current.take() {
-                    let source = cur.track.source;
+                    let (source, uri) = (cur.track.source, cur.track.uri.clone());
                     match self.seek(&mut cur, ms) {
                         Ok(()) => {
                             self.current = Some(cur);
                             self.emit_state();
                         }
-                        Err(_) => self.fail(source),
+                        Err(_) => self.fail(source, Some(uri)),
                     }
                 }
             }
@@ -320,7 +327,7 @@ impl Worker {
         let (samples, channels, hz) = match cur.dec.next_samples() {
             Ok(Some(b)) => b,
             Ok(None) => return self.finish(),
-            Err(_) => return self.fail(source),
+            Err(_) => return self.fail(source, None),
         };
         let mut stereo = to_stereo(&samples, channels);
         if hz != 44100 {
@@ -336,13 +343,13 @@ impl Worker {
         if self.sink.is_none() {
             let mut sink = (self.backend)(self.device.clone(), AudioFormat::default());
             if sink.start().is_err() {
-                return self.fail(source);
+                return self.fail(source, None);
             }
             self.sink = Some(sink);
         }
         let sink = self.sink.as_mut().unwrap();
         if sink.write(AudioPacket::Samples(stereo), &mut self.converter).is_err() {
-            self.fail(source);
+            self.fail(source, None);
         }
     }
 }
@@ -516,5 +523,32 @@ pub(crate) mod tests {
             Some(PlayerEvent::Paused(d)) => assert!(*d > Duration::ZERO && *d < Duration::from_secs(3), "{d:?}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn send_reports_a_dead_engine() {
+        let (tx, rx) = mpsc::channel();
+        drop(rx);
+        let p = ExternalPlayer { inner: Arc::new(Inner { tx, generation: Arc::new(AtomicU64::new(0)) }) };
+        assert!(!p.send(ExtCmd::Pause));
+    }
+
+    #[test]
+    fn failed_load_asks_queue_to_drop_the_track() {
+        let (sink, _keep) = crossbeam_channel::unbounded();
+        let events = EventManager::new(sink);
+        let failing: Resolver = Box::new(|_, _| Err("boom".into()));
+        let p = spawn_with_resolver(events.clone(), test_backend, None, 65535, failing);
+        load(&p, true);
+        let end = Instant::now() + Duration::from_secs(5);
+        let mut got = Vec::new();
+        while Instant::now() < end && !got.iter().any(|e| matches!(e, Event::Player(PlayerEvent::FinishedTrack))) {
+            got.extend(events.msg_iter());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let uri = track().uri;
+        let failed = got.iter().position(|e| matches!(e, Event::Queue(crate::queue::QueueEvent::TrackFailed(u)) if *u == uri));
+        let finished = got.iter().position(|e| matches!(e, Event::Player(PlayerEvent::FinishedTrack)));
+        assert!(failed.is_some() && failed < finished, "{}", got.len());
     }
 }
