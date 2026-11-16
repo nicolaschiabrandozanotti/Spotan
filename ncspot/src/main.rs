@@ -25,6 +25,7 @@ mod memory;
 #[cfg(feature = "native")]
 mod native_window;
 mod model;
+mod oauth_login;
 mod panic;
 mod queue;
 mod serialization;

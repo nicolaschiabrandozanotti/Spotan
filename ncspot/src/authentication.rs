@@ -118,17 +118,15 @@ fn credentials_prompt(error_message: Option<String>) -> Result<RespotCredentials
 pub fn create_credentials() -> Result<RespotCredentials, String> {
     println!("To login you need to perform OAuth2 authorization using your web browser\n");
 
-    let client_builder = OAuthClientBuilder::new(
+    // Until the settings screen exists (later task), the URL still goes to the console.
+    crate::oauth_login::oauth_login(
         SPOTIFY_CLIENT_ID,
-        &get_client_redirect_uri(ClientUriSuffix::Spotify),
-        OAUTH_SCOPES.to_vec(),
-    );
-    let oauth_client = client_builder.build().map_err(|e| e.to_string())?;
-
-    oauth_client
-        .get_access_token()
-        .map(|token| RespotCredentials::with_access_token(token.access_token))
-        .map_err(|e| e.to_string())
+        "/login",
+        OAUTH_SCOPES,
+        &|url| println!("Browse to: {url}"),
+        crate::oauth_login::LOGIN_TIMEOUT,
+    )
+    .map(|t| RespotCredentials::with_access_token(t.access_token))
 }
 
 pub fn get_rspotify_token() -> Result<rspotify::Token, String> {

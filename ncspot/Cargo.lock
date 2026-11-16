@@ -2661,6 +2661,8 @@ dependencies = [
  "librespot-protocol",
  "log",
  "notify-rust",
+ "oauth2",
+ "open",
  "pancurses",
  "parking_lot",
  "parse_duration",
