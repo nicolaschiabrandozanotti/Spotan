@@ -87,6 +87,13 @@ impl Playable {
         }
     }
 
+    pub fn source(&self) -> crate::model::track::Source {
+        match self {
+            Self::Track(track) => track.source,
+            Self::Episode(_) => crate::model::track::Source::Spotify,
+        }
+    }
+
     pub fn uri(&self) -> String {
         match self {
             Self::Track(track) => track.uri.clone(),
@@ -154,6 +161,7 @@ impl From<&PlayableItem> for Playable {
 impl From<&Playable> for Option<rspotify::prelude::PlayableId<'_>> {
     fn from(p: &Playable) -> Self {
         match p {
+            Playable::Track(t) if t.source != crate::model::track::Source::Spotify => None,
             Playable::Track(t) => {
                 t.id.clone()
                     .and_then(|id| rspotify::model::TrackId::from_id(id).ok())

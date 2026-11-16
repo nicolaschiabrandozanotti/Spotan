@@ -123,6 +123,7 @@ fn track_from_metadata(m: &metadata::Track, added_at: Option<DateTime<Utc>>) -> 
         list_index: 0,
         is_local: false,
         is_playable: Some(true),
+        source: Default::default(),
     }
 }
 

@@ -261,10 +261,12 @@ impl ContextMenu {
                 "Add to playlist",
                 ContextMenuAction::AddToPlaylist(Box::new(t.clone())),
             );
-            content.add_item(
-                "Similar tracks",
-                ContextMenuAction::ShowRecommendations(Box::new(t)),
-            )
+            if t.source == crate::model::track::Source::Spotify {
+                content.add_item(
+                    "Similar tracks",
+                    ContextMenuAction::ShowRecommendations(Box::new(t)),
+                )
+            }
         }
         // If the item is saveable, its save state will be set
         if let Some(savestatus) = item.is_saved(&library) {

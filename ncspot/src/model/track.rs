@@ -16,6 +16,47 @@ use crate::queue::Queue;
 use crate::traits::{IntoBoxedViewExt, ListItem, ViewExt};
 use crate::ui::listview::ListView;
 
+/// Servicio de origen de un tema.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Source {
+    #[default]
+    Spotify,
+    YouTube,
+    SoundCloud,
+}
+
+impl Source {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Spotify => "S",
+            Self::YouTube => "YT",
+            Self::SoundCloud => "SC",
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Spotify => "Spotify",
+            Self::YouTube => "YouTube",
+            Self::SoundCloud => "SoundCloud",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Spotify => "spotify",
+            Self::YouTube => "youtube",
+            Self::SoundCloud => "soundcloud",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        [Self::Spotify, Self::YouTube, Self::SoundCloud]
+            .into_iter()
+            .find(|s| s.key() == key)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Track {
     pub id: Option<String>,
@@ -35,9 +76,42 @@ pub struct Track {
     pub list_index: usize,
     pub is_local: bool,
     pub is_playable: Option<bool>,
+    #[serde(default)]
+    pub source: Source,
 }
 
 impl Track {
+    pub fn external(
+        source: Source,
+        id: String,
+        title: String,
+        artist: String,
+        duration_ms: u32,
+        cover_url: Option<String>,
+        url: String,
+    ) -> Self {
+        Self {
+            uri: format!("{}:track:{id}", source.key()),
+            id: Some(id),
+            title,
+            track_number: 0,
+            disc_number: 0,
+            duration: duration_ms,
+            artists: vec![artist],
+            artist_ids: Vec::new(),
+            album: None,
+            album_id: None,
+            album_artists: Vec::new(),
+            cover_url,
+            url,
+            added_at: None,
+            list_index: 0,
+            is_local: false,
+            is_playable: Some(true),
+            source,
+        }
+    }
+
     pub fn from_simplified_track(track: &SimplifiedTrack, album: &FullAlbum) -> Self {
         let artists = track
             .artists
@@ -73,6 +147,7 @@ impl Track {
             list_index: 0,
             is_local: track.is_local,
             is_playable: track.is_playable,
+            source: Source::Spotify,
         }
     }
 
@@ -112,6 +187,7 @@ impl From<&SimplifiedTrack> for Track {
             list_index: 0,
             is_local: track.is_local,
             is_playable: track.is_playable,
+            source: Source::Spotify,
         }
     }
 }
@@ -153,6 +229,7 @@ impl From<&FullTrack> for Track {
             list_index: 0,
             is_local: track.is_local,
             is_playable: track.is_playable,
+            source: Source::Spotify,
         }
     }
 }
@@ -230,7 +307,11 @@ impl ListItem for Track {
             } else {
                 ""
             };
-            format!("{} {}", saved, self.duration_str())
+            let tag = match self.source {
+                Source::Spotify => String::new(),
+                other => format!("[{}] ", other.label()),
+            };
+            format!("{tag}{saved} {}", self.duration_str())
         }
     }
 
@@ -248,6 +329,9 @@ impl ListItem for Track {
     }
 
     fn toggle_saved(&mut self, library: &Library) {
+        if self.source != Source::Spotify {
+            return;
+        }
         if library.is_saved_track(&Playable::Track(self.clone())) {
             library.unsave_tracks(&[self]);
         } else {
@@ -256,10 +340,16 @@ impl ListItem for Track {
     }
 
     fn save(&mut self, library: &Library) {
+        if self.source != Source::Spotify {
+            return;
+        }
         library.save_tracks(&[self]);
     }
 
     fn unsave(&mut self, library: &Library) {
+        if self.source != Source::Spotify {
+            return;
+        }
         library.unsave_tracks(&[self]);
     }
 
@@ -272,6 +362,9 @@ impl ListItem for Track {
         queue: Arc<Queue>,
         library: Arc<Library>,
     ) -> Option<Box<dyn ViewExt>> {
+        if self.source != Source::Spotify {
+            return None;
+        }
         let spotify = queue.get_spotify();
 
         let recommendations: Option<Vec<Self>> = if let Some(id) = &self.id {
@@ -301,12 +394,18 @@ impl ListItem for Track {
     }
 
     fn share_url(&self) -> Option<String> {
+        if self.source != Source::Spotify {
+            return Some(self.url.clone());
+        }
         self.id
             .clone()
             .map(|id| format!("https://open.spotify.com/track/{id}"))
     }
 
     fn album(&self, queue: &Queue) -> Option<Album> {
+        if self.source != Source::Spotify {
+            return None;
+        }
         let spotify = queue.get_spotify();
 
         match self.album_id {
@@ -316,6 +415,9 @@ impl ListItem for Track {
     }
 
     fn artists(&self) -> Option<Vec<Artist>> {
+        if self.source != Source::Spotify {
+            return None;
+        }
         Some(
             self.artist_ids
                 .iter()
@@ -331,6 +433,9 @@ impl ListItem for Track {
 
     #[inline]
     fn is_saved(&self, library: &Library) -> Option<bool> {
+        if self.source != Source::Spotify {
+            return None;
+        }
         Some(library.is_saved_track(&Playable::Track(self.clone())))
     }
 
@@ -341,5 +446,62 @@ impl ListItem for Track {
 
     fn as_listitem(&self) -> Box<dyn ListItem> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::playable::Playable;
+
+    fn yt() -> Track {
+        Track::external(
+            Source::YouTube,
+            "fJ9rUzIMcZQ".into(),
+            "Bohemian Rhapsody".into(),
+            "Queen".into(),
+            354_000,
+            None,
+            "https://www.youtube.com/watch?v=fJ9rUzIMcZQ".into(),
+        )
+    }
+
+    #[test]
+    fn track_without_source_deserializes_as_spotify() {
+        let mut v = serde_json::to_value(yt()).unwrap();
+        v.as_object_mut().unwrap().remove("source");
+        let t: Track = serde_json::from_value(v).unwrap();
+        assert_eq!(t.source, Source::Spotify);
+    }
+
+    #[test]
+    fn external_track_roundtrips_cbor() {
+        let t = yt();
+        let back: Track = serde_cbor::from_slice(&serde_cbor::to_vec(&t).unwrap()).unwrap();
+        assert_eq!(back.uri, "youtube:track:fJ9rUzIMcZQ");
+        assert_eq!(back.source, Source::YouTube);
+        assert_eq!(back.title, t.title);
+        assert_eq!(back.artists, t.artists);
+        assert_eq!(Source::from_key("soundcloud"), Some(Source::SoundCloud));
+    }
+
+    #[test]
+    fn legacy_reader_ignores_source_field() {
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        struct Legacy {
+            id: Option<String>,
+            uri: String,
+            title: String,
+        }
+        let bytes = serde_cbor::to_vec(&yt()).unwrap();
+        let l: Legacy = serde_cbor::from_slice(&bytes).unwrap();
+        assert_eq!(l.uri, "youtube:track:fJ9rUzIMcZQ");
+    }
+
+    #[test]
+    fn external_track_has_no_spotify_id() {
+        let id: Option<rspotify::prelude::PlayableId> = (&Playable::Track(yt())).into();
+        assert!(id.is_none());
     }
 }
