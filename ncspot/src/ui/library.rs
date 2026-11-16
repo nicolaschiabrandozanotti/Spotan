@@ -1,4 +1,5 @@
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use cursive::Cursive;
 use cursive::view::{View, ViewWrapper};
@@ -73,10 +74,13 @@ pub fn mixed_list<T: ListItem + Sourced + Clone>(
     };
     let mut tab = FilteredList::new(bar, ListView::new(content, queue, library.clone()));
     let mut seen = library.generation();
+    let mut last = Instant::now();
     tab.on_layout = Some(Box::new(move |bar, list| {
         let generation = library.generation();
-        if generation != seen {
+        let loading = !*library.is_done.read().unwrap();
+        if should_recompute(generation != seen, loading, last.elapsed()) {
             seen = generation;
+            last = Instant::now();
             let active = library_sources(&library);
             if active != bar.active() {
                 *bar = new_bar(active.clone(), &recompute);
@@ -96,6 +100,12 @@ pub fn mixed_list<T: ListItem + Sourced + Clone>(
         }
     }));
     tab
+}
+
+/// Durante la primera carga de Spotify cada lista nueva sube la generación: se recalcula
+/// a lo sumo cada 500 ms (`seen` no cambia al saltear, el próximo layout se pone al día).
+fn should_recompute(changed: bool, loading: bool, since_last: Duration) -> bool {
+    changed && (!loading || since_last >= Duration::from_millis(500))
 }
 
 pub struct LibraryView {
@@ -155,8 +165,7 @@ impl ViewWrapper for LibraryView {
 
     fn wrap_draw(&self, printer: &cursive::Printer) {
         self.tabs.draw(printer);
-        // sc_active lee el perfil de disco: solo se consulta sin sesión de Spotify
-        let online = self.library.is_online();
+                let online = self.library.is_online();
         let hint = hint_for(online, !online && self.library.sc_active(), self.tabs.selected_name());
         if let Some(hint) = hint {
             printer.print((1, 3), hint);
@@ -188,6 +197,15 @@ mod tests {
         assert!(show_spotify_directly(&[Source::Spotify]));
         assert!(!show_spotify_directly(&[Source::SoundCloud]));
         assert!(!show_spotify_directly(&[Source::Spotify, Source::SoundCloud]));
+    }
+
+    #[test]
+    fn recompute_is_throttled_only_while_loading() {
+        let (short, long) = (Duration::from_millis(10), Duration::from_millis(600));
+        assert!(!should_recompute(false, false, long));
+        assert!(should_recompute(true, false, short));
+        assert!(!should_recompute(true, true, short));
+        assert!(should_recompute(true, true, long));
     }
 
     #[test]

@@ -113,6 +113,8 @@ fn load_sc_profile(s: &mut Cursive, on_change: Arc<dyn Fn(ScChange) + Send + Syn
             if result.is_ok() && still_on {
                 // otro perfil: lo del anterior no se queda mostrando
                 if previous.is_some_and(|p| p != url) {
+                    // en la pantalla de inicio on_change no hace nada: la caché se borra acá
+                    crate::library::remove_sc_cache();
                     on_change(ScChange::Removed);
                 }
                 on_change(ScChange::Loaded);

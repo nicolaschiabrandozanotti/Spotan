@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::iter::Iterator;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 
@@ -64,6 +64,8 @@ pub struct Library {
     pub sc_playlists: Arc<RwLock<Vec<Playlist>>>,
     /// Sube con cada cambio de las listas; las vistas mezcladas lo comparan para recalcular.
     generation: Arc<AtomicU64>,
+    /// Hay perfil de SoundCloud; en memoria para no leer el archivo en cada dibujo.
+    sc_profile_set: Arc<AtomicBool>,
     sc_status: Arc<RwLock<Option<Result<ScUser, String>>>>,
     /// Perfil cuya descarga está en curso (evita descargas completas en paralelo).
     sc_inflight: Arc<Mutex<Option<String>>>,
@@ -88,6 +90,7 @@ impl Library {
             sc_tracks: Arc::new(RwLock::new(Vec::new())),
             sc_playlists: Arc::new(RwLock::new(Vec::new())),
             generation: Arc::new(AtomicU64::new(0)),
+            sc_profile_set: Arc::new(AtomicBool::new(false)),
             sc_status: Arc::new(RwLock::new(None)),
             sc_inflight: Arc::new(Mutex::new(None)),
             ev,
@@ -137,6 +140,7 @@ impl Library {
             sc_tracks: Arc::new(RwLock::new(Vec::new())),
             sc_playlists: Arc::new(RwLock::new(Vec::new())),
             generation: Arc::new(AtomicU64::new(0)),
+            sc_profile_set: Arc::new(AtomicBool::new(sc_library::profile().is_some())),
             sc_status: Arc::new(RwLock::new(None)),
             sc_inflight: Arc::new(Mutex::new(None)),
             ev,
@@ -168,7 +172,8 @@ impl Library {
 
     /// SoundCloud está prendido y hay perfil cargado.
     pub fn sc_active(&self) -> bool {
-        crate::external::enabled().contains(&Source::SoundCloud) && sc_library::profile().is_some()
+        crate::external::enabled().contains(&Source::SoundCloud)
+            && self.sc_profile_set.load(Ordering::SeqCst)
     }
 
     pub fn sc_status(&self) -> Arc<RwLock<Option<Result<ScUser, String>>>> {
@@ -202,6 +207,7 @@ impl Library {
     /// Carga la caché y baja la biblioteca de SoundCloud en su propio hilo.
     pub fn update_soundcloud(&self) {
         let Some(url) = sc_library::profile() else { return };
+        self.sc_profile_set.store(true, Ordering::SeqCst);
         {
             let mut inflight = self.sc_inflight.lock().unwrap();
             if inflight.as_deref() == Some(url.as_str()) {
@@ -263,6 +269,7 @@ impl Library {
         self.sc_tracks.write().unwrap().clear();
         self.sc_playlists.write().unwrap().clear();
         *self.sc_status.write().unwrap() = None;
+        self.sc_profile_set.store(false, Ordering::SeqCst);
         remove_sc_cache();
         self.bump_generation();
     }
@@ -1525,6 +1532,18 @@ mod tests {
         remove_sc_cache();
         assert!(!config::cache_path(CACHE_SC_TRACKS).exists());
         assert!(!config::cache_path(CACHE_SC_PLAYLISTS).exists());
+    }
+
+    #[test]
+    fn sc_active_uses_memory_not_file() {
+        let (_g, _d) = crate::config::test_sandbox();
+        let lib = sc_test_library();
+        lib.sc_profile_set.store(true, Ordering::SeqCst);
+        crate::external::set_enabled(Source::SoundCloud, true).unwrap();
+        sc_library::set_profile(None).unwrap(); // el archivo ya no manda
+        assert!(lib.sc_active());
+        lib.clear_soundcloud();
+        assert!(!lib.sc_active());
     }
 
     #[test]
