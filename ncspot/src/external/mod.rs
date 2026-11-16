@@ -10,6 +10,8 @@ use std::time::Duration;
 use crate::config;
 use crate::model::track::{Source, Track};
 
+pub mod hls;
+pub mod soundcloud;
 pub mod youtube;
 
 /// Orden fijo de los servicios externos.

@@ -1,0 +1,13 @@
+#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-TARGETDURATION:10
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-MAP:URI="https://cdn.example.invalid/aac_96k/x/init.mp4?expires=1&amp;Policy=P&amp;Signature=S"
+#EXTINF:10.007800,
+https://cdn.example.invalid/aac_96k/x/data000.m4s?expires=1&amp;Policy=P&amp;Signature=S
+#EXTINF:10.007800,
+https://cdn.example.invalid/aac_96k/x/data001.m4s?expires=1&amp;Policy=P&amp;Signature=S
+#EXTINF:9.984580,
+https://cdn.example.invalid/aac_96k/x/data002.m4s?expires=1&amp;Policy=P&amp;Signature=S
+#EXT-X-ENDLIST

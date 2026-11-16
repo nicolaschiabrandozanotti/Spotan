@@ -1,0 +1,108 @@
+{
+ "collection": [
+  {
+   "id": 2408461857,
+   "title": "Dâu Hào Môn Lofi",
+   "duration": 244108,
+   "artwork_url": "https://i1.sndcdn.com/artworks-2sAZzlyoS5BihX2W-cfzNYA-large.jpg",
+   "permalink_url": "https://soundcloud.com/y-b-nh-708353768/dau-hao-mon-lofi",
+   "policy": "ALLOW",
+   "user": {
+    "username": "Đây Bình"
+   },
+   "track_authorization": "FAKE_AUTH_0",
+   "media": {
+    "transcodings": [
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:2408461857/fake0/stream/hls",
+      "preset": "aac_96k",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+      },
+      "quality": "lq"
+     },
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:2408461857/fake1/stream/hls",
+      "preset": "abr_sq",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mpegurl"
+      },
+      "quality": "sq"
+     }
+    ]
+   }
+  },
+  {
+   "id": 2398021050,
+   "title": "Giá Như Anh Là Em |Lofi .| - Lệ Quyên",
+   "duration": 216190,
+   "artwork_url": "https://i1.sndcdn.com/artworks-Q6DOEbZ6HmKyhJPL-qiLKyQ-large.jpg",
+   "permalink_url": "https://soundcloud.com/abcxyz16/gi-nh-anh-l-em-lofi-hot-tiktok",
+   "policy": "ALLOW",
+   "user": {
+    "username": "Olise"
+   },
+   "track_authorization": "FAKE_AUTH_1",
+   "media": {
+    "transcodings": [
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:2398021050/fake0/stream/hls",
+      "preset": "aac_160k",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+      },
+      "quality": "sq"
+     },
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:2398021050/fake1/stream/hls",
+      "preset": "aac_96k",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+      },
+      "quality": "lq"
+     },
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:2398021050/fake2/stream/hls",
+      "preset": "abr_sq",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mpegurl"
+      },
+      "quality": "sq"
+     }
+    ]
+   }
+  },
+  {
+   "id": 1,
+   "title": "Tema con DRM",
+   "duration": 200000,
+   "artwork_url": null,
+   "permalink_url": "https://soundcloud.com/x/drm",
+   "policy": "ALLOW",
+   "user": {
+    "username": "sello"
+   },
+   "track_authorization": "FAKE_AUTH_DRM",
+   "media": {
+    "transcodings": [
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:1/fake/stream/hls",
+      "preset": "aac_160k",
+      "format": {
+       "protocol": "ctr-encrypted-hls",
+       "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+      },
+      "quality": "sq"
+     }
+    ]
+   }
+  }
+ ],
+ "total_results": 500,
+ "next_href": "https://api-v2.soundcloud.com/search/tracks?query_urn=soundcloud%3Asearch%3AFAKE&offset=3&q=lofi&limit=3"
+}
