@@ -14,7 +14,6 @@ use crate::model::playable::Playable;
 use crate::model::track::Source;
 use crate::spotify::PlayerEvent;
 use crate::spotify::Spotify;
-use crate::traits::ListItem;
 
 /// Repeat behavior for the [Queue].
 #[derive(Display, Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -584,6 +583,7 @@ pub(crate) mod tests {
     use crate::library::Library;
     use crate::model::track::Track;
     use crate::spotify::Spotify;
+    use crate::traits::ListItem;
 
     pub(crate) fn make_track(id: u32) -> Playable {
         Playable::Track(Track {
