@@ -9,6 +9,7 @@ use log::{debug, error, info};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::authentication::{ApiSession, api_session};
 use crate::config::Config;
 use crate::config::{self, CACHE_VERSION};
 use crate::events::EventManager;
@@ -377,7 +378,21 @@ impl Library {
             .collect();
         let mut list_order: HashMap<String, usize> = HashMap::new();
 
-        let remote_lists = spclient_library::playlists(&self.spotify);
+        let mut remote_lists = spclient_library::playlists(&self.spotify);
+        if use_web_api_fallback(remote_lists.is_err(), &api_session()) {
+            info!("playlists: falling back to the Web API (no tracks)");
+            // Only new lists are added, without tracks; cached ones stay as they are.
+            if let Some(lists) = self.spotify.api.current_user_playlist().fetch_all() {
+                for mut playlist in lists {
+                    if !cached.contains(&playlist.id) {
+                        playlist.tracks = None;
+                        self.append_or_update(playlist, false);
+                    }
+                }
+                self.trigger_redraw();
+            }
+            remote_lists = Err(());
+        }
         for (index, remote) in remote_lists.iter().flatten().enumerate() {
             list_order.insert(remote.id.clone(), list_order.len());
             if !self.needs_download(remote) {
@@ -529,11 +544,12 @@ impl Library {
         let cached = self.tracks.read().unwrap().clone();
         // `:update` refetches the metadata too, so don't reuse cached tracks
         let reusable: &[Track] = if refetch_unchanged { &[] } else { &cached };
-        match liked_result(
-            &cached,
-            spclient_library::liked_tracks(&self.spotify, reusable),
-            refetch_unchanged,
-        ) {
+        let mut fetched = spclient_library::liked_tracks(&self.spotify, reusable);
+        if use_web_api_fallback(fetched.is_err(), &api_session()) {
+            info!("liked songs: falling back to the Web API");
+            fetched = web_api_liked_tracks(&self.spotify).ok_or(());
+        }
+        match liked_result(&cached, fetched, refetch_unchanged) {
             Some(tracks) => {
                 *self.tracks.write().unwrap() = tracks;
                 true
@@ -946,6 +962,26 @@ impl Library {
     }
 }
 
+/// Use the Web API only when the internal channel failed and the user has an active session.
+fn use_web_api_fallback(spclient_failed: bool, session: &ApiSession) -> bool {
+    spclient_failed && *session == ApiSession::Active
+}
+
+/// Liked songs through the Web API, or `None` if any page fails (the cache stays untouched).
+fn web_api_liked_tracks(spotify: &Spotify) -> Option<Vec<Track>> {
+    let mut tracks = Vec::new();
+    loop {
+        let page = spotify
+            .api
+            .current_user_saved_tracks(tracks.len() as u32)
+            .ok()?;
+        tracks.extend(page.items.iter().map(Track::from));
+        if page.next.is_none() {
+            return Some(tracks);
+        }
+    }
+}
+
 /// `Some(new)` if the liked songs fetched from the internal channel differ from the cache (ids,
 /// order or `added_at`) or `refetch_unchanged` is set. `None` keeps the cache: either the fetch failed or nothing changed.
 fn liked_result(
@@ -1010,6 +1046,14 @@ fn is_stale(local: &Playlist, remote: &Playlist) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fallback_only_with_active_session() {
+        assert!(use_web_api_fallback(true, &ApiSession::Active));
+        assert!(!use_web_api_fallback(true, &ApiSession::None));
+        assert!(!use_web_api_fallback(true, &ApiSession::Expired));
+        assert!(!use_web_api_fallback(false, &ApiSession::Active));
+    }
 
     fn tracks(ids: &[&str]) -> Vec<Track> {
         ids.iter()

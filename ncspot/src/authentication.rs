@@ -120,10 +120,14 @@ pub enum ApiSession {
 }
 
 /// Custom Web API client ID chosen by the user; `None` means the shared one.
-#[allow(dead_code)] // usado en la tarea del menú de ajustes
 pub fn api_client_id() -> Option<String> {
     let id = fs::read_to_string(config::config_path("api_client_id")).ok()?;
     Some(id.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// Search results per page: a custom app is limited to 10, the shared one allows 50.
+pub fn search_page_size() -> u32 {
+    if api_client_id().is_some() { 10 } else { 50 }
 }
 
 pub fn effective_client_id() -> String {
@@ -161,7 +165,6 @@ pub fn set_api_client_id(id: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-#[allow(dead_code)] // usado en la tarea del menú de ajustes
 pub fn api_session() -> ApiSession {
     let has_token = fs::read_to_string(config::cache_path(TOKEN_FILE))
         .ok()
@@ -328,6 +331,14 @@ mod test {
 
     fn no_refresh(_: &str, _: &str) -> Result<LoginTokens, String> {
         panic!("refresh must not be called");
+    }
+
+    #[test]
+    fn search_page_size_depends_on_own_app() {
+        let (_g, _d) = sandbox();
+        assert_eq!(search_page_size(), 50);
+        fs::write(config::config_path("api_client_id"), "abc").unwrap();
+        assert_eq!(search_page_size(), 10);
     }
 
     #[test]
