@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
 use std::{env, fmt};
 
@@ -24,6 +24,8 @@ use crate::application::ASYNC_RUNTIME;
 use crate::authentication::SPOTIFY_CLIENT_ID;
 use crate::config;
 use crate::events::{Event, EventManager};
+use crate::external::player::{ExtCmd, ExternalPlayer};
+use crate::model::track::Source;
 use crate::model::playable::Playable;
 #[cfg(feature = "mpris")]
 use crate::mpris::{MprisCommand, MprisManager};
@@ -64,6 +66,10 @@ pub struct Spotify {
     channel: Arc<RwLock<Option<mpsc::UnboundedSender<WorkerCommand>>>>,
     /// The live librespot session, replaced by the worker on reconnect.
     session: Arc<RwLock<Option<Session>>>,
+    /// Motor de YouTube/SoundCloud; se crea en el primer `load` de un tema externo.
+    external: Arc<Mutex<Option<ExternalPlayer>>>,
+    /// Motor que tiene el tema actual, para encaminar play/pause/seek.
+    current_source: Arc<RwLock<Source>>,
 }
 
 impl Spotify {
@@ -72,19 +78,8 @@ impl Spotify {
         credentials: Credentials,
         cfg: Arc<config::Config>,
     ) -> Result<Self, Box<dyn Error>> {
-        let mut spotify = Self {
-            events,
-            #[cfg(feature = "mpris")]
-            mpris: Default::default(),
-            credentials,
-            cfg: cfg.clone(),
-            status: Arc::new(RwLock::new(PlayerEvent::Stopped)),
-            api: WebApi::new(),
-            elapsed: Arc::new(RwLock::new(None)),
-            since: Arc::new(RwLock::new(None)),
-            channel: Arc::new(RwLock::new(None)),
-            session: Arc::new(RwLock::new(None)),
-        };
+        let mut spotify = Self::new_offline(events, cfg.clone());
+        spotify.credentials = credentials;
 
         let (user_tx, user_rx) = oneshot::channel();
         spotify.start_worker(Some(user_tx))?;
@@ -111,15 +106,14 @@ impl Spotify {
         Ok(spotify)
     }
 
-    /// Create a disconnected Spotify instance for use in tests. No worker thread is started and
-    /// no network connections are made.
-    #[cfg(test)]
-    pub fn new_for_test(cfg: Arc<config::Config>, events: EventManager) -> Self {
+    /// Create a Spotify instance without worker, session or token: only YouTube/SoundCloud
+    /// tracks can play. No thread is started and no network connection is made.
+    pub fn new_offline(events: EventManager, cfg: Arc<config::Config>) -> Self {
         Self {
             events,
             #[cfg(feature = "mpris")]
             mpris: Default::default(),
-            credentials: Credentials::with_password("test_user", "test_pass"),
+            credentials: Credentials::with_password("offline_user", "offline_pass"),
             cfg,
             status: Arc::new(RwLock::new(PlayerEvent::Stopped)),
             api: WebApi::new(),
@@ -127,7 +121,20 @@ impl Spotify {
             since: Arc::new(RwLock::new(None)),
             channel: Arc::new(RwLock::new(None)),
             session: Arc::new(RwLock::new(None)),
+            external: Arc::new(Mutex::new(None)),
+            current_source: Arc::new(RwLock::new(Source::Spotify)),
         }
+    }
+
+    /// Create a disconnected Spotify instance for use in tests.
+    #[cfg(test)]
+    pub fn new_for_test(cfg: Arc<config::Config>, events: EventManager) -> Self {
+        Self::new_offline(events, cfg)
+    }
+
+    /// Whether a worker (a Spotify session) exists.
+    pub fn is_online(&self) -> bool {
+        self.channel.read().unwrap().is_some()
     }
 
     /// Start the worker thread. If `user_tx` is given, it will receive the username of the logged
@@ -386,11 +393,39 @@ impl Spotify {
             return;
         }
 
-        self.send_worker(WorkerCommand::Load(
-            track.clone(),
-            start_playing,
-            position_ms,
-        ));
+        let source = track.source();
+        if source == Source::Spotify && !self.is_online() {
+            warn!("no Spotify session, skipping {track:?}");
+            self.events.send(Event::Player(PlayerEvent::FinishedTrack));
+            return;
+        }
+        *self.current_source.write().unwrap() = source;
+
+        match (source, track) {
+            (Source::Spotify, _) => {
+                self.send_external(ExtCmd::Stop);
+                self.send_worker(WorkerCommand::Load(
+                    track.clone(),
+                    start_playing,
+                    position_ms,
+                ));
+            }
+            (_, Playable::Track(t)) => {
+                if self.is_online() {
+                    self.send_worker(WorkerCommand::StopQuiet);
+                }
+                if !self.send_external_load(ExtCmd::Load {
+                    track: t.clone(),
+                    start_playing,
+                    position_ms,
+                }) {
+                    self.events.send(Event::Player(PlayerEvent::FinishedTrack));
+                    return;
+                }
+            }
+            // un episodio siempre es de Spotify
+            _ => unreachable!(),
+        }
 
         #[cfg(feature = "mpris")]
         self.send_mpris(MprisCommand::EmitMetadataStatus);
@@ -432,7 +467,7 @@ impl Spotify {
     /// Start playback of the [Player].
     pub fn play(&self) {
         info!("play()");
-        self.send_worker(WorkerCommand::Play);
+        self.dispatch(ExtCmd::Play, WorkerCommand::Play);
     }
 
     /// Toggle playback (play/pause) of the [Player].
@@ -460,33 +495,75 @@ impl Spotify {
 
     /// Send a [WorkerCommand] to the worker thread.
     fn send_worker(&self, cmd: WorkerCommand) {
-        info!("sending command to worker: {cmd:?}");
         let channel = self.channel.read().unwrap();
         match channel.as_ref() {
             Some(channel) => {
+                info!("sending command to worker: {cmd:?}");
                 if let Err(e) = channel.send(cmd) {
                     error!("can't send command to spotify worker: {e}, dropping command");
                 }
             }
-            None => error!("no channel to worker available"),
+            // sin sesión es lo esperado: los comandos de Spotify no aplican
+            None => debug!("no Spotify worker, dropping {cmd:?}"),
+        }
+    }
+
+    /// Send a command to the external engine, only if it already exists.
+    fn send_external(&self, cmd: ExtCmd) {
+        if let Some(player) = self.external.lock().unwrap().as_ref() {
+            player.send(cmd);
+        }
+    }
+
+    /// Send `cmd` to the external engine, creating it on first use. False if it can't be created.
+    fn send_external_load(&self, cmd: ExtCmd) -> bool {
+        let mut external = self.external.lock().unwrap();
+        if external.is_none() {
+            let values = self.cfg.values();
+            match Self::init_backend(values.backend.clone()) {
+                Ok(backend) => {
+                    *external = Some(crate::external::player::spawn(
+                        self.events.clone(),
+                        backend,
+                        values.backend_device.clone(),
+                        self.volume(),
+                    ));
+                }
+                Err(e) => {
+                    error!("can't start external player: {e}");
+                    self.events.notify(format!("No se pudo iniciar el audio: {e}"));
+                    return false;
+                }
+            }
+        }
+        external.as_ref().unwrap().send(cmd);
+        true
+    }
+
+    /// Route a playback command to the engine that owns the current track.
+    fn dispatch(&self, ext: ExtCmd, worker: WorkerCommand) {
+        if *self.current_source.read().unwrap() == Source::Spotify {
+            self.send_worker(worker);
+        } else {
+            self.send_external(ext);
         }
     }
 
     /// Pause playback of the [Player].
     pub fn pause(&self) {
         info!("pause()");
-        self.send_worker(WorkerCommand::Pause);
+        self.dispatch(ExtCmd::Pause, WorkerCommand::Pause);
     }
 
     /// Stop playback of the [Player].
     pub fn stop(&self) {
         info!("stop()");
-        self.send_worker(WorkerCommand::Stop);
+        self.dispatch(ExtCmd::Stop, WorkerCommand::Stop);
     }
 
     /// Seek in the currently played [Playable] played by the [Player].
     pub fn seek(&self, position_ms: u32) {
-        self.send_worker(WorkerCommand::Seek(position_ms));
+        self.dispatch(ExtCmd::Seek(position_ms), WorkerCommand::Seek(position_ms));
         #[cfg(feature = "mpris")]
         self.notify_seeked(position_ms);
     }
@@ -522,6 +599,7 @@ impl Spotify {
         info!("setting volume to {volume}");
         self.cfg.with_state_mut(|s| s.volume = volume);
         self.send_worker(WorkerCommand::SetVolume(volume));
+        self.send_external(ExtCmd::SetVolume(volume));
         // HACK: This is a bit of a hack to prevent duplicate update signals when updating from the
         // MPRIS implementation.
         if notify {
@@ -533,12 +611,15 @@ impl Spotify {
     /// Preload the given [Playable] in the [Player]. This makes sure it can be played immediately
     /// after the current [Playable] is finished.
     pub fn preload(&self, track: &Playable) {
-        self.send_worker(WorkerCommand::Preload(track.clone()));
+        if track.source() == Source::Spotify {
+            self.send_worker(WorkerCommand::Preload(track.clone()));
+        }
     }
 
-    /// Shut down the worker thread.
+    /// Shut down the worker thread and release the external player.
     pub fn shutdown(&self) {
         self.send_worker(WorkerCommand::Shutdown);
+        *self.external.lock().unwrap() = None;
     }
 
     #[cfg(feature = "mpris")]
@@ -605,6 +686,57 @@ mod tests {
     fn parse_invalid_uri() {
         let uri_type: Result<UriType, _> = "kayava".parse();
         assert!(matches!(uri_type, Err(UriParseError)));
+    }
+
+    use crate::events::Event;
+    use crate::model::playable::Playable;
+    use crate::model::track::{Source, Track};
+
+    fn offline() -> (Spotify, EventManager, impl Sized) {
+        let (sink, keep) = crossbeam_channel::unbounded();
+        let events = EventManager::new(sink);
+        (
+            Spotify::new_offline(events.clone(), config::Config::new_for_test()),
+            events,
+            keep,
+        )
+    }
+
+    fn external_track(source: Source) -> Playable {
+        Playable::Track(Track::external(
+            source, "x".into(), "t".into(), "a".into(), 3000, None, "u".into(),
+        ))
+    }
+
+    #[test]
+    fn offline_spotify_skips_spotify_tracks() {
+        let (spotify, events, _keep) = offline();
+        assert!(!spotify.is_online());
+        let mut track = Track::external(
+            Source::YouTube, "abc".into(), "t".into(), "a".into(), 3000, None, "u".into(),
+        );
+        track.source = Source::Spotify;
+        spotify.load(&Playable::Track(track), true, 0);
+        let got: Vec<_> = events.msg_iter().collect();
+        assert!(matches!(got.as_slice(), [Event::Player(PlayerEvent::FinishedTrack)]));
+    }
+
+    #[test]
+    fn external_load_sets_current_source() {
+        let (spotify, events, _keep) = offline();
+        assert!(spotify.external.lock().unwrap().is_none());
+        // sin red: motor con resolutor de prueba y sink que cuenta
+        *spotify.external.lock().unwrap() = Some(crate::external::player::spawn_with_resolver(
+            events,
+            crate::external::player::tests::test_backend,
+            None,
+            65535,
+            crate::external::player::tests::tone_resolver(),
+        ));
+        spotify.load(&external_track(Source::YouTube), false, 0);
+        assert_eq!(*spotify.current_source.read().unwrap(), Source::YouTube);
+        spotify.load(&external_track(Source::SoundCloud), false, 0);
+        assert_eq!(*spotify.current_source.read().unwrap(), Source::SoundCloud);
     }
 
     #[test]

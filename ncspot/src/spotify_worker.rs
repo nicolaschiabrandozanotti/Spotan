@@ -33,10 +33,17 @@ pub(crate) enum WorkerCommand {
     Play,
     Pause,
     Stop,
+    /// Como `Stop`, pero el `Stopped` que provoca no se reenvía (cambio a otro motor).
+    StopQuiet,
     Seek(u32),
     SetVolume(u16),
     Preload(Playable),
     Shutdown,
+}
+
+/// Con `quiet` armado, el próximo `Stopped` de librespot se descarta y la bandera se limpia.
+fn should_forward_stopped(quiet: &mut bool) -> bool {
+    !std::mem::take(quiet)
 }
 
 enum PlayerStatus {
@@ -93,6 +100,7 @@ impl Worker {
         let mut load_failed = false;
         let mut preload = None;
         let mut preload_retried = false;
+        let mut quiet_stop = false;
 
         loop {
             if self.session.is_invalid() && reconnect.is_none() {
@@ -145,6 +153,7 @@ impl Worker {
                     Some(WorkerCommand::Load(playable, start_playing, position_ms)) => {
                         loading = None;
                         preload = None;
+                        quiet_stop = false;
                         match SpotifyUri::from_uri(&playable.uri()) {
                             Ok(uri) => {
                                 info!("player loading track: {uri:?}");
@@ -181,6 +190,13 @@ impl Worker {
                     Some(WorkerCommand::Stop) => {
                         loading = None;
                         preload = None;
+                        self.player.stop();
+                    }
+                    Some(WorkerCommand::StopQuiet) => {
+                        loading = None;
+                        preload = None;
+                        // si el reproductor ya está parado no habrá Stopped que descartar
+                        quiet_stop = !matches!(self.player_status, PlayerStatus::Stopped);
                         self.player.stop();
                     }
                     Some(WorkerCommand::Seek(pos)) => {
@@ -234,7 +250,9 @@ impl Worker {
                         self.player_status = PlayerStatus::Paused;
                     }
                     Some(LibrespotPlayerEvent::Stopped { .. }) => {
-                        self.events.send(Event::Player(PlayerEvent::Stopped));
+                        if should_forward_stopped(&mut quiet_stop) {
+                            self.events.send(Event::Player(PlayerEvent::Stopped));
+                        }
                         self.player_status = PlayerStatus::Stopped;
                     }
                     Some(LibrespotPlayerEvent::EndOfTrack { .. }) => {
@@ -301,7 +319,7 @@ impl Drop for Worker {
 
 #[cfg(test)]
 mod tests {
-    use super::reconnect_delay;
+    use super::{reconnect_delay, should_forward_stopped};
     use std::time::Duration;
 
     #[test]
@@ -309,5 +327,13 @@ mod tests {
         let delays: Vec<_> = (0..=7).map(reconnect_delay).collect();
         let expected: Vec<_> = [1, 1, 2, 4, 8, 16, 30, 30].map(Duration::from_secs).into();
         assert_eq!(delays, expected);
+    }
+
+    #[test]
+    fn quiet_stop_does_not_emit_stopped() {
+        let mut quiet = true;
+        assert!(!should_forward_stopped(&mut quiet));
+        assert!(!quiet);
+        assert!(should_forward_stopped(&mut quiet));
     }
 }

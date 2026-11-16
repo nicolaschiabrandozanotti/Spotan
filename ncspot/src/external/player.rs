@@ -29,7 +29,7 @@ pub enum ExtCmd {
 }
 
 /// (fuente, ms donde empieza la fuente) para un tema y una posición pedida.
-type Resolver = Box<dyn Fn(&Track, u32) -> Result<(Box<dyn MediaSource>, u32), String> + Send>;
+pub(crate) type Resolver = Box<dyn Fn(&Track, u32) -> Result<(Box<dyn MediaSource>, u32), String> + Send>;
 
 #[derive(Clone)]
 pub struct ExternalPlayer {
@@ -59,7 +59,7 @@ pub fn spawn(events: EventManager, backend: SinkBuilder, device: Option<String>,
     spawn_with_resolver(events, backend, device, volume, Box::new(resolve))
 }
 
-fn spawn_with_resolver(events: EventManager, backend: SinkBuilder, device: Option<String>, volume: u16, resolver: Resolver) -> ExternalPlayer {
+pub(crate) fn spawn_with_resolver(events: EventManager, backend: SinkBuilder, device: Option<String>, volume: u16, resolver: Resolver) -> ExternalPlayer {
     let (tx, rx) = mpsc::channel();
     let generation = Arc::new(AtomicU64::new(0));
     let epoch = generation.clone();
@@ -348,7 +348,7 @@ impl Worker {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::external::stream::RangeSource;
     use crate::model::track::Source;
@@ -373,11 +373,11 @@ mod tests {
         }
     }
 
-    fn test_backend(_: Option<String>, _: AudioFormat) -> Box<dyn Sink> {
+    pub(crate) fn test_backend(_: Option<String>, _: AudioFormat) -> Box<dyn Sink> {
         Box::new(CountSink)
     }
 
-    fn tone_resolver() -> Resolver {
+    pub(crate) fn tone_resolver() -> Resolver {
         Box::new(|_, _| {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/external/fixtures/tone.m4a");
             let data = std::fs::read(path).map_err(|e| e.to_string())?;
