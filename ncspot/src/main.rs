@@ -19,6 +19,7 @@ mod command;
 mod commands;
 mod config;
 mod events;
+mod external;
 mod ext_traits;
 mod library;
 mod memory;
