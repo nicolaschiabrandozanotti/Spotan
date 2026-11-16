@@ -330,6 +330,10 @@ impl ListItem for Playlist {
         queue: Arc<Queue>,
         library: Arc<Library>,
     ) -> Option<Box<dyn ViewExt>> {
+        // los ids de SoundCloud no son semillas de Spotify
+        if self.is_read_only() {
+            return None;
+        }
         self.load_tracks(&queue.get_spotify());
         const MAX_SEEDS: usize = 5;
         let track_ids: Vec<String> = self
@@ -371,6 +375,9 @@ impl ListItem for Playlist {
     }
 
     fn share_url(&self) -> Option<String> {
+        if self.is_read_only() {
+            return None;
+        }
         Some(format!(
             "https://open.spotify.com/user/{}/playlist/{}",
             self.owner_id, self.id

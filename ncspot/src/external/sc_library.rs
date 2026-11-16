@@ -97,8 +97,8 @@ pub fn playlist_order(json: &Value) -> (Vec<String>, Vec<Track>) {
 
 /// Temas en el orden de `order`; los ids sin tema se omiten.
 pub fn order_tracks(order: &[String], known: Vec<Track>) -> Vec<Track> {
-    let mut by_id: HashMap<String, Track> = known.into_iter().filter_map(|t| Some((t.id.clone()?, t))).collect();
-    order.iter().filter_map(|id| by_id.remove(id)).collect()
+    let by_id: HashMap<String, Track> = known.into_iter().filter_map(|t| Some((t.id.clone()?, t))).collect();
+    order.iter().filter_map(|id| by_id.get(id).cloned()).collect()
 }
 
 /// Respuesta de `/tracks?ids=` (arreglo en la raíz).
@@ -279,6 +279,17 @@ mod tests {
         let t = order_tracks(&order, known); // sin completar los 2 stubs
         assert_eq!(t.len(), 5);
         assert_eq!(t.iter().map(|t| t.id.clone().unwrap()).collect::<Vec<_>>(), order[..5]);
+    }
+
+    #[test]
+    fn repeated_track_in_playlist_is_kept() {
+        let (order, known) = playlist_order(&fx("sc_playlist"));
+        let first = order[0].clone();
+        let mut order = order[..5].to_vec();
+        order.push(first.clone());
+        let t = order_tracks(&order, known);
+        assert_eq!(t.len(), 6);
+        assert_eq!(t[0].id, t[5].id);
     }
 
     #[test]
