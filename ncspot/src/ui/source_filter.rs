@@ -5,6 +5,7 @@ use crate::command::Command;
 use crate::commands::CommandResult;
 use crate::external::Page;
 use crate::library::Library;
+use crate::model::album::Album;
 use crate::model::playlist::Playlist;
 use crate::model::track::{Source, Track};
 use crate::traits::{ListItem, ViewExt};
@@ -21,6 +22,12 @@ pub trait Sourced {
 }
 
 impl Sourced for Track {
+    fn source(&self) -> Source {
+        self.source
+    }
+}
+
+impl Sourced for Album {
     fn source(&self) -> Source {
         self.source
     }
