@@ -450,6 +450,29 @@ mod tests {
     }
 
     #[test]
+    fn stale_resolve_does_not_leak_events() {
+        let inner = tone_resolver();
+        let slow_a: Resolver = Box::new(move |t, pos| {
+            if t.id.as_deref() == Some("A") {
+                std::thread::sleep(Duration::from_millis(300));
+            }
+            inner(t, pos)
+        });
+        let (sink, _keep) = crossbeam_channel::unbounded();
+        let events = EventManager::new(sink);
+        let p = spawn_with_resolver(events.clone(), test_backend, None, 65535, slow_a);
+        for id in ["A", "B"] {
+            let mut t = track();
+            t.id = Some(id.into());
+            p.send(ExtCmd::Load { track: t, start_playing: true, position_ms: 0 });
+        }
+        let got = collect(&events, 10, |e| *e == PlayerEvent::FinishedTrack);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(matches!(got.as_slice(), [PlayerEvent::Playing(_), PlayerEvent::FinishedTrack]), "{got:?}");
+        assert!(events.msg_iter().next().is_none());
+    }
+
+    #[test]
     fn hls_positioned_load_reports_target_not_segment_start() {
         use crate::external::hls::parse_m3u8;
         use crate::external::stream::HlsSource;
