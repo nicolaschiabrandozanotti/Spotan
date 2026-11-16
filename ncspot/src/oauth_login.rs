@@ -112,11 +112,13 @@ pub fn refresh(client_id: &str, refresh_token: &str) -> Result<LoginTokens, Stri
 pub fn oauth_login(
     client_id: &str,
     path: &str,
+    port: u16,
     scopes: &[&str],
     on_url: &dyn Fn(&str),
     timeout: Duration,
 ) -> Result<LoginTokens, String> {
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let listener = TcpListener::bind(("127.0.0.1", port))
+        .map_err(|e| format!("no se pudo abrir el puerto {port}: {e}"))?;
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let redirect = format!("http://127.0.0.1:{port}{path}");
@@ -211,7 +213,7 @@ mod test {
     #[test]
     fn oauth_listener_times_out() {
         let t = Instant::now();
-        let r = oauth_login("id", "/login", &["x"], &|_| {}, Duration::from_millis(200));
+        let r = oauth_login("id", "/login", 0, &["x"], &|_| {}, Duration::from_millis(200));
         assert!(r.is_err());
         assert!(t.elapsed() < Duration::from_secs(2));
     }

@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use cursive::event::{Event, EventResult};
+use cursive::event::{Event, EventResult, EventTrigger, MouseButton, MouseEvent};
 use cursive::theme::{ColorStyle, PaletteColor};
 use cursive::traits::{Nameable, Resizable};
 use cursive::utils::markup::StyledString;
 use cursive::view::{View, ViewWrapper};
 use cursive::{Cursive, Printer, Rect, Vec2};
-use cursive::views::{Button, Checkbox, DummyView, EditView, LinearLayout, TextView};
+use cursive::views::{Button, Checkbox, DummyView, EditView, LinearLayout, NamedView, OnEventView, TextView};
 use librespot_core::authentication::Credentials as RespotCredentials;
 
 use crate::application::UserData;
@@ -95,6 +95,38 @@ fn api_status_text(session: &ApiSession, own_app: bool) -> &'static str {
 
 fn current_api_status() -> &'static str {
     api_status_text(&authentication::api_session(), authentication::api_client_id().is_some())
+}
+
+#[cfg(feature = "share_clipboard")]
+fn clipboard_text() -> Option<String> {
+    crate::sharing::read_share().ok()
+}
+
+#[cfg(not(feature = "share_clipboard"))]
+fn clipboard_text() -> Option<String> {
+    None
+}
+
+/// Windows' classic console neither pastes into raw-mode apps nor lets mouse capture keep right-click.
+fn is_paste(e: &Event) -> bool {
+    matches!(e, Event::CtrlChar('v') | Event::Mouse { event: MouseEvent::Press(MouseButton::Right), .. })
+}
+
+// Replaces instead of inserting: the field only ever holds one Client ID.
+fn paste_into(v: &mut NamedView<EditView>) -> Option<EventResult> {
+    let text: String = clipboard_text()?.chars().filter(|c| !c.is_whitespace()).collect();
+    Some(EventResult::Consumed(Some(v.get_mut().set_content(text))))
+}
+
+fn copy_redirect(s: &mut Cursive) {
+    #[cfg(feature = "share_clipboard")]
+    let msg = match crate::sharing::write_share(authentication::OWN_APP_REDIRECT.into()) {
+        Ok(()) => "Redirect URI copiada: pegala en Spotify con Ctrl+V".to_string(),
+        Err(e) => format!("Error: {e}"),
+    };
+    #[cfg(not(feature = "share_clipboard"))]
+    let msg = format!("Redirect URI: {}", authentication::OWN_APP_REDIRECT);
+    set_text(s, MSG, msg);
 }
 
 fn set_text(s: &mut Cursive, name: &str, text: String) {
@@ -237,10 +269,13 @@ impl SettingsView {
                 LinearLayout::horizontal()
                     .child(TextView::new("Client ID: "))
                     .child(
-                        EditView::new()
-                            .content(authentication::api_client_id().unwrap_or_default())
-                            .with_name(API_ID)
-                            .max_width(CLIENT_ID_WIDTH),
+                        OnEventView::new(
+                            EditView::new()
+                                .content(authentication::api_client_id().unwrap_or_default())
+                                .with_name(API_ID),
+                        )
+                        .on_pre_event_inner(EventTrigger::from_fn(is_paste), |v, _| paste_into(v))
+                        .max_width(CLIENT_ID_WIDTH),
                     ),
             );
             layout.add_child(
@@ -285,9 +320,18 @@ impl SettingsView {
                         .with_name(BTN_SHARED),
                     ),
             );
-            layout.add_child(TextView::new(hint(
-                "Cómo sacarla: developer.spotify.com > Create app > Redirect URI: http://127.0.0.1/ncspot_login > copiá el Client ID",
-            )));
+            layout.add_child(TextView::new(hint(&format!(
+                "Cómo sacarla: Abrir developer.spotify.com > Create app > Redirect URI: {} (botón Copiar) > Save > copiá el Client ID y pegalo arriba con Ctrl+V o clic derecho",
+                authentication::OWN_APP_REDIRECT
+            ))));
+            layout.add_child(
+                LinearLayout::horizontal()
+                    .child(Button::new("Abrir developer.spotify.com", |_| {
+                        open::that_in_background("https://developer.spotify.com/dashboard");
+                    }))
+                    .child(DummyView.fixed_width(1))
+                    .child(Button::new("Copiar Redirect URI", copy_redirect)),
+            );
         }
         layout.add_child(DummyView);
         layout.add_child(TextView::new("").with_name(MSG));
@@ -363,6 +407,16 @@ impl ViewExt for SettingsView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paste_on_ctrl_v_or_right_click() {
+        use cursive::XY;
+        assert!(is_paste(&Event::CtrlChar('v')));
+        assert!(!is_paste(&Event::Char('v')));
+        let mouse = |b| Event::Mouse { offset: XY::zero(), position: XY::zero(), event: MouseEvent::Press(b) };
+        assert!(is_paste(&mouse(MouseButton::Right)));
+        assert!(!is_paste(&mouse(MouseButton::Left)));
+    }
 
     #[test]
     fn centered_box_centers_and_fits() {

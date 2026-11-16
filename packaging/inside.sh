@@ -2,7 +2,7 @@
 set -eu
 cargo build --locked --profile distribution --features native --bin ncspot
 cargo build --locked --profile distribution --target x86_64-pc-windows-gnu --bin ncspot \
-  --no-default-features --features panels,rodio_backend,crossterm_backend
+  --no-default-features --features panels,rodio_backend,crossterm_backend,share_clipboard
 
 out=/src/dist; rm -rf "$out/spoti-linux-x86_64" "$out/spoti-windows-x86_64"; mkdir -p "$out"
 pkg=/src/packaging

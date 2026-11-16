@@ -77,6 +77,7 @@ pub fn create_credentials_with(on_url: &dyn Fn(&str)) -> Result<RespotCredential
     crate::oauth_login::oauth_login(
         SPOTIFY_CLIENT_ID,
         "/login",
+        0,
         OAUTH_SCOPES,
         on_url,
         crate::oauth_login::LOGIN_TIMEOUT,
@@ -96,6 +97,10 @@ pub enum ApiSession {
 }
 
 /// Custom Web API client ID chosen by the user; `None` means the shared one.
+/// Port of the Redirect URI an own app registers: http://127.0.0.1:8989/ncspot_login
+pub const OWN_APP_PORT: u16 = 8989;
+pub const OWN_APP_REDIRECT: &str = "http://127.0.0.1:8989/ncspot_login";
+
 pub fn api_client_id() -> Option<String> {
     let id = fs::read_to_string(config::config_path("api_client_id")).ok()?;
     Some(id.trim().to_string()).filter(|s| !s.is_empty())
@@ -179,6 +184,8 @@ pub fn api_login(on_url: &dyn Fn(&str)) -> Result<(), String> {
     let tokens = oauth_login::oauth_login(
         &id,
         "/ncspot_login",
+        // The dashboard rejects port-less loopback URIs as "not secure", so own apps register this one.
+        if api_client_id().is_some() { OWN_APP_PORT } else { 0 },
         NCSPOT_OAUTH_SCOPES,
         on_url,
         oauth_login::LOGIN_TIMEOUT,

@@ -99,11 +99,11 @@ At the top, next to Biblioteca · Buscar · Cola, there is an **Ajustes** (Setti
    - **App name**: `Spoti` (or anything).
    - **App description**: `Personal terminal client`.
    - **Website**: leave empty.
-   - **Redirect URIs**: add `http://127.0.0.1/ncspot_login` (click **Add**). The *"This redirect URI is not secure"* warning is normal for `127.0.0.1` addresses; save it anyway.
+   - **Redirect URIs**: add `http://127.0.0.1:8989/ncspot_login` (click **Add**), port included: without it Spotify rejects it as *"not secure"*. In Settings, the **Copiar Redirect URI** button copies it for you.
    - **Which API/SDKs**: tick only **Web API**.
    - Accept the terms and click **Save**.
 3. In your app, open **Settings** and copy the **Client ID** (32 characters). **The Client Secret is not needed**: Spoti never asks for it or stores it.
-4. In Spoti: **Ajustes** → paste the Client ID → **Iniciar sesión en la API** → accept in the browser. The status changes to *activa (app propia)*.
+4. In Spoti: **Ajustes** → paste the Client ID (Ctrl+V or right-click) → **Iniciar sesión en la API** → accept in the browser. The status changes to *activa (app propia)*.
 
 Notes:
 - Spotify limits developer apps to **5 users**. If someone else wants to use your app, add them in the app dashboard → **User Management** with their name and Spotify account email. Otherwise they can create their own (it takes 2 minutes).
