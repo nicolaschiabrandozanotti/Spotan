@@ -153,7 +153,8 @@ struct Current {
 
 impl Current {
     fn position_ms(&self) -> u32 {
-        self.base_ms + (self.frames * 1000 / 44100) as u32
+        // durante el descarte (HLS) el audio todavía no llegó a `skip_until_ms`
+        (self.base_ms + (self.frames * 1000 / 44100) as u32).max(self.skip_until_ms)
     }
 }
 
@@ -438,12 +439,36 @@ mod tests {
     fn stale_generation_events_are_dropped() {
         let (p, events, _k) = setup();
         load(&p, true);
+        // A ya está sonando cuando entra B
+        collect(&events, 5, |e| matches!(e, PlayerEvent::Playing(_)));
         load(&p, true);
         let got = collect(&events, 10, |e| *e == PlayerEvent::FinishedTrack);
         std::thread::sleep(Duration::from_millis(300));
         let rest: Vec<_> = events.msg_iter().collect();
-        assert_eq!(got.iter().filter(|e| **e == PlayerEvent::FinishedTrack).count(), 1, "{got:?}");
-        assert!(rest.iter().all(|e| !matches!(e, Event::Player(PlayerEvent::FinishedTrack))));
+        assert!(matches!(got.as_slice(), [PlayerEvent::Playing(_), PlayerEvent::FinishedTrack]), "{got:?}");
+        assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn hls_positioned_load_reports_target_not_segment_start() {
+        use crate::external::hls::parse_m3u8;
+        use crate::external::stream::HlsSource;
+        let resolver: Resolver = Box::new(|_, pos| {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/external/fixtures/tone_hls");
+            let hls = parse_m3u8(&std::fs::read_to_string(dir.join("tone.m3u8")).unwrap()).unwrap();
+            let (idx, start) = hls.segment_at(pos);
+            let src = HlsSource::new(hls, idx, Box::new(move |n| std::fs::read(dir.join(n))));
+            Ok((Box::new(src) as Box<dyn MediaSource>, start))
+        });
+        let (sink, _keep) = crossbeam_channel::unbounded();
+        let events = EventManager::new(sink);
+        let p = spawn_with_resolver(events.clone(), test_backend, None, 65535, resolver);
+        p.send(ExtCmd::Load { track: track(), start_playing: false, position_ms: 1500 });
+        let got = collect(&events, 5, |e| matches!(e, PlayerEvent::Paused(_)));
+        match got.last() {
+            Some(PlayerEvent::Paused(d)) => assert!(*d >= Duration::from_millis(1500), "{d:?}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
