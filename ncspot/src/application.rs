@@ -89,9 +89,7 @@ fn start_screen(
     );
     cursive.add_fullscreen_layer(view);
     if let Some(e) = initial_error {
-        cursive.call_on_name(ui::settings::MSG, |v: &mut cursive::views::TextView| {
-            v.set_content(e)
-        });
+        ui::settings::set_message(&mut cursive, e);
     }
     while cursive.is_running() {
         pacing.step(&mut cursive);

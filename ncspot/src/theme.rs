@@ -1,6 +1,5 @@
 #![allow(clippy::enum_glob_use)]
 
-use cursive::theme::BaseColor::*;
 use cursive::theme::Color::*;
 use cursive::theme::PaletteColor::*;
 use cursive::theme::*;
@@ -35,56 +34,72 @@ macro_rules! load_color {
     };
 }
 
+fn spoti(r: u8, g: u8, b: u8) -> Color {
+    Rgb(r, g, b)
+}
+
 /// Create a [cursive::theme::Theme] from `theme_cfg`.
 pub fn load(theme_cfg: &Option<ConfigTheme>) -> Theme {
     let mut palette = Palette::default();
     let borders = BorderStyle::Simple;
 
-    palette[Background] = load_color!(theme_cfg, background, TerminalDefault);
-    palette[View] = load_color!(theme_cfg, background, TerminalDefault);
-    palette[Primary] = load_color!(theme_cfg, primary, TerminalDefault);
-    palette[Secondary] = load_color!(theme_cfg, secondary, Dark(Blue));
-    palette[TitlePrimary] = load_color!(theme_cfg, title, Dark(Red));
-    palette[HighlightText] = load_color!(theme_cfg, highlight, Dark(White));
-    palette[Highlight] = load_color!(theme_cfg, highlight_bg, Dark(Red));
-    palette[HighlightInactive] = load_color!(theme_cfg, highlight_inactive_bg, Dark(Blue));
-    palette.set_color("playing", load_color!(theme_cfg, playing, Dark(Blue)));
+    palette[Background] = load_color!(theme_cfg, background, spoti(0x18, 0x18, 0x1F));
+    palette[View] = load_color!(theme_cfg, background, spoti(0x18, 0x18, 0x1F));
+    palette[Primary] = load_color!(theme_cfg, primary, spoti(0xE8, 0xDF, 0xDF));
+    palette[Secondary] = load_color!(theme_cfg, secondary, spoti(0xB4, 0xA3, 0xA8));
+    palette[TitlePrimary] = load_color!(theme_cfg, title, spoti(0xD2, 0xB4, 0xBE));
+    palette[HighlightText] = load_color!(theme_cfg, highlight, spoti(0xF4, 0xE9, 0xE9));
+    palette[Highlight] = load_color!(theme_cfg, highlight_bg, spoti(0x74, 0x51, 0x51));
+    palette[HighlightInactive] = load_color!(theme_cfg, highlight_inactive_bg, spoti(0x48, 0x36, 0x3B));
+    palette.set_color("playing", load_color!(theme_cfg, playing, spoti(0xDA, 0xB4, 0xB4)));
     palette.set_color(
         "playing_selected",
-        load_color!(theme_cfg, playing_selected, Light(Blue)),
+        load_color!(theme_cfg, playing_selected, spoti(0xE8, 0xDF, 0xDF)),
     );
     palette.set_color(
         "playing_bg",
-        load_color!(theme_cfg, playing_bg, TerminalDefault),
+        load_color!(theme_cfg, playing_bg, spoti(0x1F, 0x18, 0x18)),
     );
-    palette.set_color("error", load_color!(theme_cfg, error, TerminalDefault));
-    palette.set_color("error_bg", load_color!(theme_cfg, error_bg, Dark(Red)));
+    palette.set_color("error", load_color!(theme_cfg, error, spoti(0xF4, 0xE9, 0xE9)));
+    palette.set_color("error_bg", load_color!(theme_cfg, error_bg, spoti(0x74, 0x42, 0x4C)));
     palette.set_color(
         "statusbar_progress",
-        load_color!(theme_cfg, statusbar_progress, Dark(Blue)),
+        load_color!(theme_cfg, statusbar_progress, spoti(0xDA, 0xB4, 0xB4)),
     );
     palette.set_color(
         "statusbar_progress_bg",
-        load_color!(theme_cfg, statusbar_progress_bg, Light(Black)),
+        load_color!(theme_cfg, statusbar_progress_bg, spoti(0x48, 0x36, 0x3B)),
     );
-    palette.set_color("statusbar", load_color!(theme_cfg, statusbar, Dark(Yellow)));
+    palette.set_color("statusbar", load_color!(theme_cfg, statusbar, spoti(0xE8, 0xDF, 0xDF)));
     palette.set_color(
         "statusbar_bg",
-        load_color!(theme_cfg, statusbar_bg, TerminalDefault),
+        load_color!(theme_cfg, statusbar_bg, spoti(0x74, 0x51, 0x51)),
     );
-    palette.set_color("cmdline", load_color!(theme_cfg, cmdline, TerminalDefault));
+    palette.set_color("cmdline", load_color!(theme_cfg, cmdline, spoti(0xE8, 0xDF, 0xDF)));
     palette.set_color(
         "cmdline_bg",
-        load_color!(theme_cfg, cmdline_bg, TerminalDefault),
+        load_color!(theme_cfg, cmdline_bg, spoti(0x1F, 0x18, 0x18)),
     );
     palette.set_color(
         "search_match",
-        load_color!(theme_cfg, search_match, Light(Red)),
+        load_color!(theme_cfg, search_match, spoti(0xE6, 0xBD, 0xCB)),
     );
 
     Theme {
         shadow: false,
         palette,
         borders,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_defaults_are_spoti_palette() {
+        let theme = load(&None);
+        assert_eq!(theme.palette[Background], Rgb(0x18, 0x18, 0x1F));
+        assert_eq!(theme.palette[Highlight], Rgb(0x74, 0x51, 0x51));
     }
 }
