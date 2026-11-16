@@ -8,7 +8,6 @@ use log::{error, info, warn};
 use crate::oauth_login::{self, LoginTokens};
 
 use crate::config::{self, Config};
-use crate::spotify::Spotify;
 
 pub const SPOTIFY_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
 
@@ -60,46 +59,19 @@ static NCSPOT_OAUTH_SCOPES: &[&str] = &[
     "user-read-recently-played",
 ];
 
-/// Get credentials for use with librespot. This first tries to get cached credentials. If no cached
-/// credentials are available it will initiate the OAuth2 login process.
-pub fn get_credentials(configuration: &Config) -> Result<RespotCredentials, String> {
-    let mut credentials = {
-        let cache = Cache::new(Some(config::cache_path("librespot")), None, None, None)
-            .expect("Could not create librespot cache");
-        let cached_credentials = cache.credentials();
-        match cached_credentials {
-            Some(c) => {
-                info!("Using cached credentials");
-                c
-            }
-            None => {
-                info!("Attempting to login via OAuth2");
-                credentials_prompt(None)?
-            }
-        }
-    };
-
-    while let Err(error) = Spotify::test_credentials(configuration, credentials.clone()) {
-        let error_msg = format!("{error}");
-        credentials = credentials_prompt(Some(error_msg))?;
+/// Cached librespot credentials, or `None` when the start screen must ask for a login.
+/// Never prints or opens a browser.
+pub fn get_credentials(_configuration: &Config) -> Result<Option<RespotCredentials>, String> {
+    let cache = Cache::new(Some(config::cache_path("librespot")), None, None, None)
+        .map_err(|e| format!("Could not create librespot cache: {e}"))?;
+    let cached = cache.credentials();
+    if cached.is_some() {
+        info!("Using cached credentials");
     }
-    Ok(credentials)
+    Ok(cached)
 }
 
-fn credentials_prompt(error_message: Option<String>) -> Result<RespotCredentials, String> {
-    if let Some(message) = error_message {
-        eprintln!("Connection error: {message}");
-    }
-
-    create_credentials()
-}
-
-pub fn create_credentials() -> Result<RespotCredentials, String> {
-    println!("To login you need to perform OAuth2 authorization using your web browser\n");
-    create_credentials_with(&|url| println!("Browse to: {url}"))
-}
-
-/// Like `create_credentials` but reports the login URL through `on_url` (blocking).
+/// Starts the OAuth2 login and reports the login URL through `on_url` (blocking).
 pub fn create_credentials_with(on_url: &dyn Fn(&str)) -> Result<RespotCredentials, String> {
     crate::oauth_login::oauth_login(
         SPOTIFY_CLIENT_ID,
@@ -331,6 +303,13 @@ mod test {
 
     fn no_refresh(_: &str, _: &str) -> Result<LoginTokens, String> {
         panic!("refresh must not be called");
+    }
+
+    #[test]
+    fn missing_credentials_means_start_screen() {
+        let (_g, _dir) = sandbox();
+        let cfg = Config::new(None);
+        assert!(get_credentials(&cfg).unwrap().is_none());
     }
 
     #[test]

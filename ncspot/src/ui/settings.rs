@@ -19,7 +19,7 @@ pub enum SettingsMode {
     Start,
 }
 
-const MSG: &str = "settings_msg";
+pub const MSG: &str = "settings_msg";
 const API_STATUS: &str = "settings_api_status";
 const API_ID: &str = "settings_api_id";
 const BTN_SPOTIFY: &str = "settings_btn_spotify";

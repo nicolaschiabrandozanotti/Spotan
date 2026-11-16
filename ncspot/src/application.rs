@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use cursive::traits::Nameable;
+use librespot_core::authentication::Credentials;
 use cursive::{Cursive, CursiveRunner};
 use log::{error, info, trace};
 
@@ -59,6 +60,54 @@ pub struct UserDataInner {
 /// The global Tokio runtime for running asynchronous tasks.
 pub static ASYNC_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
+/// Standalone login screen shown when there are no (valid) cached credentials. Returns the
+/// credentials once they have connected to Spotify.
+fn start_screen(
+    configuration: &Arc<Config>,
+    theme: &cursive::theme::Theme,
+    initial_error: Option<String>,
+) -> Result<Credentials, String> {
+    let (mut cursive, mut pacing) = create_cursive().map_err(|e| e.to_string())?;
+    cursive.set_theme(theme.clone());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let sink = cursive.cb_sink().clone();
+    let configuration = configuration.clone();
+    let view = ui::settings::SettingsView::new(
+        ui::settings::SettingsMode::Start,
+        None,
+        Box::new(move |credentials| {
+            let _ = sink.send(Box::new(|s| {
+                s.call_on_name(ui::settings::MSG, |v: &mut cursive::views::TextView| {
+                    v.set_content("Conectando…")
+                });
+            }));
+            match Spotify::test_credentials(&configuration, credentials.clone()) {
+                Ok(_) => {
+                    let _ = tx.send(credentials);
+                    let _ = sink.send(Box::new(|s| s.quit()));
+                }
+                Err(e) => {
+                    let _ = sink.send(Box::new(move |s| {
+                        s.call_on_name(ui::settings::MSG, |v: &mut cursive::views::TextView| {
+                            v.set_content(format!("Error: {e}"))
+                        });
+                    }));
+                }
+            }
+        }),
+    );
+    cursive.add_fullscreen_layer(view);
+    if let Some(e) = initial_error {
+        cursive.call_on_name(ui::settings::MSG, |v: &mut cursive::views::TextView| {
+            v.set_content(e)
+        });
+    }
+    while cursive.is_running() {
+        pacing.step(&mut cursive);
+    }
+    rx.try_recv().map_err(|_| "Inicio de sesión cancelado".to_string())
+}
+
 /// The representation of an ncspot application.
 pub struct Application {
     /// The music queue which controls playback order.
@@ -98,14 +147,21 @@ impl Application {
             .unwrap();
 
         let configuration = Arc::new(Config::new(configuration_file_path));
-        let credentials = authentication::get_credentials(&configuration)?;
         let theme = configuration.build_theme();
 
-        if let Err(e) = authentication::get_rspotify_token() {
-            error!("Failed to get rspotify token: {e}");
+        let mut start_error = None;
+        let mut credentials = authentication::get_credentials(&configuration)?;
+        if let Some(c) = credentials.clone() {
+            if let Err(e) = Spotify::test_credentials(&configuration, c) {
+                error!("Cached credentials rejected: {e}");
+                start_error = Some(format!("Error: {e}"));
+                credentials = None;
+            }
         }
-
-        println!("Connecting to Spotify..");
+        let credentials = match credentials {
+            Some(c) => c,
+            None => start_screen(&configuration, &theme, start_error)?,
+        };
 
         // DON'T USE STDOUT AFTER THIS CALL!
         let (mut cursive, draw_pacing) = create_cursive().map_err(|error| error.to_string())?;
