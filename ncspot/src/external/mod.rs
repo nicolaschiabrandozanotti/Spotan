@@ -12,6 +12,7 @@ use crate::model::track::{Source, Track};
 
 pub mod hls;
 pub mod soundcloud;
+pub mod stream;
 pub mod youtube;
 
 /// Orden fijo de los servicios externos.
