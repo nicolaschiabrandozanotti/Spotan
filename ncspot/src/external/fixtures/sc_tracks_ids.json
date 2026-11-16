@@ -1,0 +1,76 @@
+[
+ {
+  "id": 30370224,
+  "title": "Bach - Cello Suite No.1 Prelude",
+  "duration": 157669,
+  "artwork_url": null,
+  "permalink_url": "https://soundcloud.com/mar-munoz/bach-cello-suite-no-1-prelude",
+  "user": {
+   "username": "marmunozg",
+   "id": 9705368
+  },
+  "media": {
+   "transcodings": [
+    {
+     "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:30370224/0952ed60-592c-4acd-827a-972f3b592e94/stream/hls",
+     "preset": "aac_96k",
+     "format": {
+      "protocol": "hls",
+      "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+     }
+    },
+    {
+     "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:30370224/a1fd77eb-6629-4066-9e74-bcfcbf727368/stream/hls",
+     "preset": "abr_sq",
+     "format": {
+      "protocol": "hls",
+      "mime_type": "audio/mpegurl"
+     }
+    }
+   ]
+  },
+  "kind": "track",
+  "track_authorization": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW8iOiJBUiIsInN1YiI6IiIsInJpZCI6IjUzYWNmNDAzLTczZDItNGYwOS1hNzZiLTA0MTkxZDU0OWE2YSIsImlhdCI6MTc5NDg0ODM2NH0.M2vip9cIUElQ6X_-pJvovK8t1Ca60GE9dcZtgAzUB9Y"
+ },
+ {
+  "id": 17523896,
+  "title": "Totus Tuus - (Gorecki) - Chorus Anonymous",
+  "duration": 570299,
+  "artwork_url": "https://i1.sndcdn.com/artworks-000015141894-c8nh6n-large.jpg",
+  "permalink_url": "https://soundcloud.com/saaby000/totus-tuus",
+  "user": {
+   "username": "Saaby000",
+   "id": 4921264
+  },
+  "media": {
+   "transcodings": [
+    {
+     "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:17523896/01bd6f12-cefd-4989-86eb-489f09483b28/stream/hls",
+     "preset": "aac_160k",
+     "format": {
+      "protocol": "hls",
+      "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+     }
+    },
+    {
+     "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:17523896/9328d451-b55d-4bcd-80bb-726146674a56/stream/hls",
+     "preset": "aac_96k",
+     "format": {
+      "protocol": "hls",
+      "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+     }
+    },
+    {
+     "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:17523896/f3e1efaa-4225-4c05-929e-067d37522142/stream/hls",
+     "preset": "abr_sq",
+     "format": {
+      "protocol": "hls",
+      "mime_type": "audio/mpegurl"
+     }
+    }
+   ]
+  },
+  "kind": "track",
+  "track_authorization": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW8iOiJBUiIsInN1YiI6IiIsInJpZCI6IjY3NjFmYjMyLTQ5MzktNGU5Ni1hMmJhLWQwZTAxNWE2M2IyMiIsImlhdCI6MTc5NDg0ODM2NH0.Gcme3MIj1OScqv-hxAgxm7iXFIyV9WJgAkfMtswvRqs"
+ }
+]

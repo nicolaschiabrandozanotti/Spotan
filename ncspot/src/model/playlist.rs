@@ -9,7 +9,7 @@ use rspotify::model::Id;
 use rspotify::model::playlist::{FullPlaylist, SimplifiedPlaylist};
 
 use crate::model::playable::Playable;
-use crate::model::track::Track;
+use crate::model::track::{Source, Track};
 use crate::queue::Queue;
 use crate::spotify::Spotify;
 use crate::traits::{IntoBoxedViewExt, ListItem, ViewExt};
@@ -26,6 +26,9 @@ pub struct Playlist {
     pub num_tracks: usize,
     pub tracks: Option<Vec<Playable>>,
     pub collaborative: bool,
+    /// Cachés viejas no traen el campo: son de Spotify.
+    #[serde(default)]
+    pub source: Source,
 }
 
 impl Playlist {
@@ -172,6 +175,7 @@ impl From<&SimplifiedPlaylist> for Playlist {
             num_tracks: list.items.total as usize,
             tracks: None,
             collaborative: list.collaborative,
+            source: Source::Spotify,
         }
     }
 }
@@ -187,6 +191,7 @@ impl From<&FullPlaylist> for Playlist {
             num_tracks: list.items.total as usize,
             tracks: None,
             collaborative: list.collaborative,
+            source: Source::Spotify,
         }
     }
 }

@@ -1,0 +1,140 @@
+{
+ "collection": [
+  {
+   "created_at": "2019-10-21T05:44:51Z",
+   "kind": "like",
+   "track": {
+    "id": 201247503,
+    "title": "Warm",
+    "duration": 130713,
+    "artwork_url": "https://i1.sndcdn.com/artworks-000113748616-uncngu-large.jpg",
+    "permalink_url": "https://soundcloud.com/joeypecoraro/warm",
+    "user": {
+     "username": "Joey Pecoraro",
+     "id": 2053164
+    },
+    "media": {
+     "transcodings": [
+      {
+       "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:201247503/9404cf6b-047d-4263-b617-e15d838048c9/stream/hls",
+       "preset": "aac_160k",
+       "format": {
+        "protocol": "hls",
+        "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+       }
+      },
+      {
+       "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:201247503/c5768a8b-13bf-42ad-9051-2e33076462f2/stream/hls",
+       "preset": "aac_96k",
+       "format": {
+        "protocol": "hls",
+        "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+       }
+      },
+      {
+       "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:201247503/0ed74ce6-c1f3-46dc-be56-b114560b1cec/stream/hls",
+       "preset": "abr_sq",
+       "format": {
+        "protocol": "hls",
+        "mime_type": "audio/mpegurl"
+       }
+      }
+     ]
+    },
+    "kind": "track",
+    "track_authorization": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW8iOiJBUiIsInN1YiI6IiIsInJpZCI6IjAzNGZmZThhLTU5ZDEtNDg5ZS04MGRiLTMwNjM3MWM0MThmMiIsImlhdCI6MTc5NDg0ODMxNX0.K99Ml32Y-D07XRJVubwwlx3K59zWEMAOMdTUP5l7MCI"
+   }
+  },
+  {
+   "created_at": "2019-10-06T06:37:19Z",
+   "kind": "like",
+   "track": {
+    "id": 588195402,
+    "title": "Noah - メルティン・ブルー",
+    "duration": 294193,
+    "artwork_url": "https://i1.sndcdn.com/artworks-000588752849-vk2xez-large.jpg",
+    "permalink_url": "https://soundcloud.com/flaurecords/5-blue",
+    "user": {
+     "username": "FLAU",
+     "id": 2927301
+    },
+    "media": {
+     "transcodings": [
+      {
+       "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:588195402/cccbbbb8-6466-4e73-9252-3fa8e08cc48f/stream/hls",
+       "preset": "aac_160k",
+       "format": {
+        "protocol": "hls",
+        "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+       }
+      },
+      {
+       "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:588195402/353e82d6-4b63-4e9f-9140-8b06fb045d02/stream/hls",
+       "preset": "aac_96k",
+       "format": {
+        "protocol": "hls",
+        "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+       }
+      },
+      {
+       "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:588195402/4d7dd1c3-f8ad-4f26-866c-457e64700243/stream/hls",
+       "preset": "abr_sq",
+       "format": {
+        "protocol": "hls",
+        "mime_type": "audio/mpegurl"
+       }
+      }
+     ]
+    },
+    "kind": "track",
+    "track_authorization": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW8iOiJBUiIsInN1YiI6IiIsInJpZCI6IjlkMWJhN2E0LTNmZTYtNGU1Zi05ZGM4LTU1Njk2MTJiNDI0ZSIsImlhdCI6MTc5NDg0ODMxNX0.OXsLfF7XMoyrLp4gNAzxR4dShTufmHZZgYqgUjmuFR8"
+   }
+  },
+  {
+   "created_at": "2019-10-06T06:36:22Z",
+   "kind": "like",
+   "track": {
+    "id": 665861231,
+    "title": "Pick A Piper - Sentience (feat Sophia Alexandra)",
+    "duration": 323113,
+    "artwork_url": "https://i1.sndcdn.com/artworks-000582572966-mncu74-large.jpg",
+    "permalink_url": "https://soundcloud.com/pickapiper/pick-a-piper-sentience",
+    "user": {
+     "username": "Pick a Piper",
+     "id": 541022
+    },
+    "media": {
+     "transcodings": [
+      {
+       "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:665861231/037e81a6-b818-4990-aad4-c5ca087e2018/stream/hls",
+       "preset": "aac_160k",
+       "format": {
+        "protocol": "hls",
+        "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+       }
+      },
+      {
+       "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:665861231/05e55510-86c5-4b5e-8c1c-44be672466bd/stream/hls",
+       "preset": "aac_96k",
+       "format": {
+        "protocol": "hls",
+        "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+       }
+      },
+      {
+       "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:665861231/97878a25-a6bc-4f3d-9d77-b8d32eb7a449/stream/hls",
+       "preset": "abr_sq",
+       "format": {
+        "protocol": "hls",
+        "mime_type": "audio/mpegurl"
+       }
+      }
+     ]
+    },
+    "kind": "track",
+    "track_authorization": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW8iOiJBUiIsInN1YiI6IiIsInJpZCI6IjgyZDVkOGFmLWU5ZjItNDA4ZC05YWM5LWUwMTUxYzhlZjJlNSIsImlhdCI6MTc5NDg0ODMxNX0.1sLNsz8_XcTWpBqlQW_LNw7iE6FO2_6mBaKAaXKzP10"
+   }
+  }
+ ],
+ "next_href": "https://api-v2.soundcloud.com/users/183/track_likes?offset=2011-01-06T23%3A51%3A07.000Z%2Cuser-track-likes%2C000-00000000000000000183-00000000000008814302&limit=20"
+}

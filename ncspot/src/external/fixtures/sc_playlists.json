@@ -1,0 +1,37 @@
+{
+ "collection": [
+  {
+   "id": 2050462,
+   "title": "Ecclesia Inspiration",
+   "track_count": 7,
+   "user": {
+    "username": "Forss",
+    "id": 183
+   },
+   "is_album": false,
+   "set_type": "",
+   "sharing": "public",
+   "permalink_url": "https://soundcloud.com/forss/sets/ecclesia-inspiration",
+   "artwork_url": "https://i1.sndcdn.com/artworks-000024196741-jielb4-large.jpg",
+   "last_modified": "2016-05-23T10:19:02Z",
+   "kind": "playlist"
+  },
+  {
+   "id": 1815863,
+   "title": "Ecclesia",
+   "track_count": 10,
+   "user": {
+    "username": "Forss",
+    "id": 183
+   },
+   "is_album": true,
+   "set_type": "album",
+   "sharing": "public",
+   "permalink_url": "https://soundcloud.com/forss/sets/ecclesia",
+   "artwork_url": "https://i1.sndcdn.com/artworks-000020950238-cses45-large.jpg",
+   "last_modified": "2015-10-13T14:05:19Z",
+   "kind": "playlist"
+  }
+ ],
+ "next_href": null
+}

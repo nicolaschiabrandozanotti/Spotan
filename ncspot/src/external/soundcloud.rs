@@ -52,25 +52,22 @@ pub fn pick_transcoding(track: &Value) -> Option<String> {
     })
 }
 
+pub fn parse_track(t: &Value) -> Option<Track> {
+    let mut track = Track::external(
+        Source::SoundCloud,
+        t["id"].as_u64()?.to_string(),
+        t["title"].as_str()?.to_string(),
+        t["user"]["username"].as_str().unwrap_or_default().to_string(),
+        t["duration"].as_u64().unwrap_or(0) as u32,
+        t["artwork_url"].as_str().map(String::from),
+        t["permalink_url"].as_str().unwrap_or_default().to_string(),
+    );
+    track.is_playable = Some(pick_transcoding(t).is_some());
+    Some(track)
+}
+
 pub fn parse_search(json: &Value) -> Page {
-    let tracks = json["collection"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|t| {
-            let mut track = Track::external(
-                Source::SoundCloud,
-                t["id"].as_u64()?.to_string(),
-                t["title"].as_str()?.to_string(),
-                t["user"]["username"].as_str().unwrap_or_default().to_string(),
-                t["duration"].as_u64().unwrap_or(0) as u32,
-                t["artwork_url"].as_str().map(String::from),
-                t["permalink_url"].as_str().unwrap_or_default().to_string(),
-            );
-            track.is_playable = Some(pick_transcoding(t).is_some());
-            Some(track)
-        })
-        .collect();
+    let tracks = json["collection"].as_array().into_iter().flatten().filter_map(parse_track).collect();
     Page { tracks, next: json["next_href"].as_str().map(String::from) }
 }
 

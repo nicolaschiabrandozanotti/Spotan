@@ -1,0 +1,235 @@
+{
+ "id": 2050462,
+ "title": "Ecclesia Inspiration",
+ "track_count": 7,
+ "user": {
+  "username": "Forss",
+  "id": 183
+ },
+ "is_album": false,
+ "set_type": "",
+ "sharing": "public",
+ "permalink_url": "https://soundcloud.com/forss/sets/ecclesia-inspiration",
+ "artwork_url": "https://i1.sndcdn.com/artworks-000024196741-jielb4-large.jpg",
+ "last_modified": "2016-05-23T10:19:02Z",
+ "kind": "playlist",
+ "tracks": [
+  {
+   "id": 28301249,
+   "title": "Duruflé  Introit and Kyrie",
+   "duration": 445982,
+   "artwork_url": null,
+   "permalink_url": "https://soundcloud.com/truro-cathedral/1-durufl-introit-and-kyrie",
+   "user": {
+    "username": "Truro Cathedral",
+    "id": 5670271
+   },
+   "media": {
+    "transcodings": [
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:28301249/50b5351b-b079-458b-8da2-b48f16796b73/stream/hls",
+      "preset": "aac_160k",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+      }
+     },
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:28301249/8e7957bc-1729-4c3f-81bd-0f912225e80e/stream/hls",
+      "preset": "aac_96k",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+      }
+     },
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:28301249/232ba93d-04a2-4012-ab5b-7e9aa0785fda/stream/hls",
+      "preset": "abr_sq",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mpegurl"
+      }
+     }
+    ]
+   },
+   "kind": "track",
+   "track_authorization": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW8iOiJBUiIsInN1YiI6IiIsInJpZCI6ImNjYzAyZmVjLWJjNzEtNDM5Mi05MjlmLWI2MjkyZjBiNmE0ZSIsImlhdCI6MTc5NDg0ODMxN30.nXZELW3e81i4nI8gmBKwwpdkr-d-GzyGZl4uu5hB4bM"
+  },
+  {
+   "id": 28301273,
+   "title": "Duruflé  In Paradisum",
+   "duration": 186064,
+   "artwork_url": null,
+   "permalink_url": "https://soundcloud.com/truro-cathedral/21-durufl-in-paradisum",
+   "user": {
+    "username": "Truro Cathedral",
+    "id": 5670271
+   },
+   "media": {
+    "transcodings": [
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:28301273/df4b15ea-0d0e-44ca-b501-0578afbab4f6/stream/hls",
+      "preset": "aac_160k",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+      }
+     },
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:28301273/e276ae4c-cd7a-4e61-99e0-5458e1dfef9a/stream/hls",
+      "preset": "aac_96k",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+      }
+     },
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:28301273/53f73ed9-a3e0-4301-8a49-f3838894ed62/stream/hls",
+      "preset": "abr_sq",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mpegurl"
+      }
+     }
+    ]
+   },
+   "kind": "track",
+   "track_authorization": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW8iOiJBUiIsInN1YiI6IiIsInJpZCI6Ijg1NzUwMzI4LWM4N2ItNDdjNC04ZjZiLWYzZjY5OWQ3OGE5NiIsImlhdCI6MTc5NDg0ODMxN30.c4VANmSYEJgahW0ylnDRidGHNulZhz_DKAOT23DIiJ0"
+  },
+  {
+   "id": 28301261,
+   "title": "Duruflé  Sanctus",
+   "duration": 199987,
+   "artwork_url": null,
+   "permalink_url": "https://soundcloud.com/truro-cathedral/10-durufl-sanctus",
+   "user": {
+    "username": "Truro Cathedral",
+    "id": 5670271
+   },
+   "media": {
+    "transcodings": [
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:28301261/eefd6096-6db6-4568-b08f-48c2699d4922/stream/hls",
+      "preset": "aac_160k",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+      }
+     },
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:28301261/d86885d7-2329-45ab-82d5-e9e4067ade13/stream/hls",
+      "preset": "aac_96k",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+      }
+     },
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:28301261/8178442b-60e1-4ce2-9308-574e4b1a3b86/stream/hls",
+      "preset": "abr_sq",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mpegurl"
+      }
+     }
+    ]
+   },
+   "kind": "track",
+   "track_authorization": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW8iOiJBUiIsInN1YiI6IiIsInJpZCI6ImQwZjNiODUwLTA3OGYtNGVkMC1iOTdlLTAzNGYzMTc5NDBjOSIsImlhdCI6MTc5NDg0ODMxN30.uymVoj2IqjdZnvrnctHkmjcltg5LbiC9Mlk5sTKbyMA"
+  },
+  {
+   "id": 5126382,
+   "title": "Fauré: Requiem - Sanctus (from \"De Anima\")",
+   "duration": 207615,
+   "artwork_url": null,
+   "permalink_url": "https://soundcloud.com/galway-baroque-singers/18-faure-sanctus-from-requiem",
+   "user": {
+    "username": "Galway Baroque Singers",
+    "id": 1628705
+   },
+   "media": {
+    "transcodings": [
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:5126382/366c34c4-0d89-4f38-8b0a-11383e3bf734/stream/hls",
+      "preset": "aac_160k",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+      }
+     },
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:5126382/7cebeae9-bf4d-4f12-9dc8-7fab4d4b9b3a/stream/hls",
+      "preset": "aac_96k",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+      }
+     },
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:5126382/e1e4fd03-891c-4ae5-842a-bca6c78b4d4f/stream/hls",
+      "preset": "abr_sq",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mpegurl"
+      }
+     }
+    ]
+   },
+   "kind": "track",
+   "track_authorization": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW8iOiJBUiIsInN1YiI6IiIsInJpZCI6ImUyNjA4MDBjLTllNzgtNDA0OC05ZDBjLWZkYzk2Zjk1YjY2ZCIsImlhdCI6MTc5NDg0ODMxN30.mAf3WAqnCR5BqCfyOj8HA3l7Y0ulKKV28dMVwcZdxQw"
+  },
+  {
+   "id": 5126379,
+   "title": "Fauré: Requiem - In Paradisum (from \"De Anima\")",
+   "duration": 230106,
+   "artwork_url": null,
+   "permalink_url": "https://soundcloud.com/galway-baroque-singers/20-faure-in-paradisum-from-requiem",
+   "user": {
+    "username": "Galway Baroque Singers",
+    "id": 1628705
+   },
+   "media": {
+    "transcodings": [
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:5126379/44233ead-4362-46fe-962b-2b5f9403cd39/stream/hls",
+      "preset": "aac_160k",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+      }
+     },
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:5126379/a5ae112a-81d6-4784-bdb2-d7e85f719e66/stream/hls",
+      "preset": "aac_96k",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+      }
+     },
+     {
+      "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:5126379/18b95bef-b3df-495f-b93b-ba73c7276940/stream/hls",
+      "preset": "abr_sq",
+      "format": {
+       "protocol": "hls",
+       "mime_type": "audio/mpegurl"
+      }
+     }
+    ]
+   },
+   "kind": "track",
+   "track_authorization": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW8iOiJBUiIsInN1YiI6IiIsInJpZCI6IjE4NjI4ZDg2LTFiNzAtNDcyOS1iNjMwLWMwNjk3NjcyMTQ5MSIsImlhdCI6MTc5NDg0ODMxN30.48qhWFixSfRU47SoGVlSJU1M0lxcFicvbwY-_Oi0blA"
+  },
+  {
+   "id": 30370224,
+   "kind": "track",
+   "monetization_model": "NOT_APPLICABLE",
+   "policy": "ALLOW"
+  },
+  {
+   "id": 17523896,
+   "kind": "track",
+   "monetization_model": "NOT_APPLICABLE",
+   "policy": "ALLOW"
+  }
+ ]
+}

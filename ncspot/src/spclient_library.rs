@@ -88,6 +88,7 @@ fn playlist_from_meta(uri: &str, meta: &MetaItem) -> Option<Playlist> {
         num_tracks: meta.length().max(0) as usize,
         tracks: None,
         collaborative: meta.attributes.collaborative(),
+        source: crate::model::track::Source::Spotify,
     })
 }
 

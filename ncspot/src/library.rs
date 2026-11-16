@@ -1213,6 +1213,7 @@ mod tests {
             num_tracks,
             tracks,
             collaborative: false,
+            source: crate::model::track::Source::Spotify,
         }
     }
 
