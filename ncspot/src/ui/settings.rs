@@ -12,6 +12,7 @@ use librespot_core::authentication::Credentials as RespotCredentials;
 use crate::application::UserData;
 use crate::authentication::{self, ApiSession};
 use crate::command::Command;
+use crate::external::sc_library::{self, ScUser};
 use crate::model::track::Source;
 use crate::traits::ViewExt;
 use crate::ui::spoti_background::Background;
@@ -31,6 +32,10 @@ const BTN_SPOTIFY: &str = "settings_btn_spotify";
 const BTN_API: &str = "settings_btn_api";
 const BTN_SHARED: &str = "settings_btn_shared";
 const BTN_ENTER: &str = "settings_btn_enter";
+const SC_PROFILE: &str = "settings_sc_profile";
+const SC_STATUS: &str = "settings_sc_status";
+const BTN_SC_LOAD: &str = "settings_btn_sc_load";
+const BTN_SC_REMOVE: &str = "settings_btn_sc_remove";
 
 /// Marker left in the start screen's user data by "Entrar sin Spotify".
 pub struct EnterWithoutSpotify;
@@ -51,8 +56,61 @@ fn service_checkbox(source: Source, label: &str) -> LinearLayout {
             }
             let can = can_enter_without_spotify(&crate::external::enabled());
             s.call_on_name(BTN_ENTER, |b: &mut Button| b.set_enabled(can));
+            if source == Source::SoundCloud {
+                set_sc_enabled(s, on);
+            }
         }))
         .child(TextView::new(format!(" {label}")))
+}
+
+/// The profile field and its buttons only work while SoundCloud is on.
+fn set_sc_enabled(s: &mut Cursive, on: bool) {
+    s.call_on_name(SC_PROFILE, |v: &mut EditView| v.set_enabled(on));
+    for name in [BTN_SC_LOAD, BTN_SC_REMOVE] {
+        s.call_on_name(name, |b: &mut Button| b.set_enabled(on));
+    }
+}
+
+fn sc_status_text(r: &Result<ScUser, String>) -> String {
+    match r {
+        Ok(u) => format!("{} · {} Likes · {} playlists", u.username, u.likes, u.playlists),
+        Err(e) => format!("Error: {e}"),
+    }
+}
+
+fn load_sc_profile(s: &mut Cursive, on_change: Arc<dyn Fn(bool) + Send + Sync>) {
+    let input = s.call_on_name(SC_PROFILE, |v: &mut EditView| v.get_content()).unwrap_or_default();
+    let Some(url) = sc_library::normalize_profile(&input) else {
+        return set_text(s, SC_STATUS, "Error: Eso no parece un perfil de SoundCloud".into());
+    };
+    set_text(s, SC_STATUS, format!("Cargando{}", crate::utils::glyph("…", "...")));
+    for name in [BTN_SC_LOAD, BTN_SC_REMOVE] {
+        s.call_on_name(name, |b: &mut Button| b.set_enabled(false));
+    }
+    let sink = s.cb_sink().clone();
+    std::thread::spawn(move || {
+        let result = sc_library::resolve(&url);
+        let _ = sink.send(Box::new(move |s| {
+            set_sc_enabled(s, true);
+            // Only a profile that resolved gets saved.
+            let result = result.and_then(|u| sc_library::set_profile(Some(&url)).map(|()| u));
+            set_text(s, SC_STATUS, sc_status_text(&result));
+            if result.is_ok() {
+                on_change(true);
+            }
+        }));
+    });
+}
+
+fn remove_sc_profile(s: &mut Cursive, on_change: &dyn Fn(bool)) {
+    match sc_library::set_profile(None) {
+        Ok(()) => {
+            s.call_on_name(SC_PROFILE, |v: &mut EditView| v.set_content(""));
+            set_text(s, SC_STATUS, String::new());
+            on_change(false);
+        }
+        Err(e) => set_text(s, SC_STATUS, format!("Error: {e}")),
+    }
 }
 
 /// Width of the text area and of the Client ID field; the box adds `PAD` around it.
@@ -191,7 +249,9 @@ impl SettingsView {
         mode: SettingsMode,
         account: Option<String>,
         on_logged_in: Box<dyn Fn(RespotCredentials) -> Result<(), String> + Send + Sync>,
+        on_sc_change: Box<dyn Fn(bool) + Send + Sync>,
     ) -> Self {
+        let on_sc_change: Arc<dyn Fn(bool) + Send + Sync> = Arc::from(on_sc_change);
         let on_logged_in: Arc<dyn Fn(RespotCredentials) -> Result<(), String> + Send + Sync> = Arc::from(on_logged_in);
         let start = mode == SettingsMode::Start;
         let mut layout = LinearLayout::vertical()
@@ -254,6 +314,34 @@ impl SettingsView {
         layout.add_child(TextView::new(heading("Otros servicios")));
         layout.add_child(service_checkbox(Source::YouTube, "YouTube"));
         layout.add_child(service_checkbox(Source::SoundCloud, "SoundCloud"));
+        let sc_on = crate::external::enabled().contains(&Source::SoundCloud);
+        let (load_cb, remove_cb) = (on_sc_change.clone(), on_sc_change);
+        let mut load = Button::new("Cargar", move |s| load_sc_profile(s, load_cb.clone()));
+        let mut remove = Button::new("Quitar", move |s| remove_sc_profile(s, &*remove_cb));
+        load.set_enabled(sc_on);
+        remove.set_enabled(sc_on);
+        layout.add_child(
+            LinearLayout::horizontal()
+                .child(TextView::new("    Perfil: "))
+                .child(
+                    OnEventView::new(
+                        EditView::new()
+                            .content(sc_library::profile().unwrap_or_default())
+                            .with_enabled(sc_on)
+                            .with_name(SC_PROFILE),
+                    )
+                    .on_pre_event_inner(EventTrigger::from_fn(is_paste), |v, _| paste_into(v))
+                    .max_width(CLIENT_ID_WIDTH),
+                ),
+        );
+        layout.add_child(
+            LinearLayout::horizontal()
+                .child(TextView::new("    "))
+                .child(load.with_name(BTN_SC_LOAD))
+                .child(DummyView.fixed_width(1))
+                .child(remove.with_name(BTN_SC_REMOVE)),
+        );
+        layout.add_child(TextView::new("").with_name(SC_STATUS));
         if start {
             let mut enter = Button::new("Entrar sin Spotify", |s| {
                 s.set_user_data(EnterWithoutSpotify);
@@ -436,11 +524,18 @@ mod tests {
                 let backend = cursive::backends::puppet::Backend::init(Some(Vec2::new(w, h)));
                 let mut runner = Cursive::new().into_runner(backend);
                 runner.set_theme(crate::theme::load(&None));
-                runner.add_fullscreen_layer(SettingsView::new(mode, None, Box::new(|_| Ok(()))));
+                runner.add_fullscreen_layer(SettingsView::new(mode, None, Box::new(|_| Ok(())), Box::new(|_| ())));
                 runner.step();
                 runner.refresh();
             }
         }
+    }
+
+    #[test]
+    fn profile_status_text() {
+        let ok = Ok(ScUser { id: 183, username: "Forss".into(), likes: 288, playlists: 4 });
+        assert_eq!(sc_status_text(&ok), "Forss · 288 Likes · 4 playlists");
+        assert_eq!(sc_status_text(&Err("No existe".into())), "Error: No existe");
     }
 
     #[test]

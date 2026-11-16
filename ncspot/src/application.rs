@@ -103,6 +103,8 @@ fn start_screen(
             let _ = sink.send(Box::new(|s| s.quit()));
             Ok(())
         }),
+        // The Library is created later and loads SoundCloud by itself.
+        Box::new(|_| ()),
     );
     cursive.add_fullscreen_layer(view);
     if let Some(e) = initial_error {
@@ -302,6 +304,16 @@ impl Application {
                 let configuration = configuration.clone();
                 move |credentials| {
                     Spotify::login_and_store(&configuration, credentials).map_err(|e| e.to_string())
+                }
+            }),
+            Box::new({
+                let library = library.clone();
+                move |loaded| {
+                    if loaded {
+                        library.update_soundcloud();
+                    } else {
+                        library.clear_soundcloud();
+                    }
                 }
             }),
         );
