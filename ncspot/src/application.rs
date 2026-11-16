@@ -78,7 +78,7 @@ fn start_screen(
         Box::new(move |credentials| {
             let _ = sink.send(Box::new(|s| {
                 s.call_on_name(ui::settings::MSG, |v: &mut cursive::views::TextView| {
-                    v.set_content("Conectando…")
+                    v.set_content(format!("Conectando{}", crate::utils::glyph("…", "...")))
                 });
             }));
             Spotify::test_credentials(&configuration, credentials.clone()).map_err(|e| e.to_string())?;
@@ -146,7 +146,7 @@ impl Application {
         let mut credentials = authentication::get_credentials()?;
         if let Some(c) = credentials.clone() {
             // Cursive is not drawn yet, so the console is still ours.
-            println!("Conectando a Spotify…");
+            println!("Conectando a Spotify{}", crate::utils::glyph("…", "..."));
             if let Err(e) = Spotify::test_credentials(&configuration, c) {
                 error!("Cached credentials rejected: {e}");
                 start_error = Some(format!("Error: {e}"));

@@ -64,7 +64,7 @@ fn api_status_text(session: &ApiSession, own_app: bool) -> &'static str {
         (ApiSession::None, _) => "sin sesión",
         (ApiSession::Active, true) => "activa (app propia)",
         (ApiSession::Active, false) => "activa (app compartida)",
-        (ApiSession::Expired, _) => "Sesión de API vencida — volvé a iniciar sesión",
+        (ApiSession::Expired, _) => "Sesión de API vencida - volvé a iniciar sesión",
     }
 }
 
@@ -103,14 +103,14 @@ fn start_login<T: Send + 'static>(
     done: impl FnOnce(&mut Cursive, Result<T, String>) + Send + 'static,
 ) {
     set_enabled(s, false);
-    set_text(s, MSG, "Esperando el navegador…".into());
+    set_text(s, MSG, format!("Esperando el navegador{}", crate::utils::glyph("…", "...")));
     let sink = s.cb_sink().clone();
     std::thread::spawn(move || {
         let url_sink = sink.clone();
         let result = login(&|url| {
             let url = url.to_string();
             let _ = url_sink.send(Box::new(move |s| {
-                set_text(s, MSG, format!("Esperando el navegador…\n{url}"));
+                set_text(s, MSG, format!("Esperando el navegador{}\n{url}", crate::utils::glyph("…", "...")));
             }));
         });
         // `done` decides when to re-enable the buttons.
@@ -241,7 +241,7 @@ impl SettingsView {
                     ),
             );
             layout.add_child(TextView::new(hint(
-                "Cómo sacarla: developer.spotify.com → Create app → Redirect URI: http://127.0.0.1/ncspot_login → copiá el Client ID",
+                "Cómo sacarla: developer.spotify.com > Create app > Redirect URI: http://127.0.0.1/ncspot_login > copiá el Client ID",
             )));
         }
         layout.add_child(DummyView);
@@ -289,14 +289,14 @@ impl ViewWrapper for SettingsView {
                     boxed.print_hline((0, y), size.x, " ");
                 }
                 printer.with_color(ColorStyle::new(palette[PaletteColor::TitlePrimary], fill), |_| {
-                    boxed.print_hline((1, 0), size.x - 2, "─");
-                    boxed.print_hline((1, size.y - 1), size.x - 2, "─");
-                    boxed.print_vline((0, 1), size.y - 2, "│");
-                    boxed.print_vline((size.x - 1, 1), size.y - 2, "│");
-                    boxed.print((0, 0), "╭");
-                    boxed.print((size.x - 1, 0), "╮");
-                    boxed.print((0, size.y - 1), "╰");
-                    boxed.print((size.x - 1, size.y - 1), "╯");
+                    boxed.print_hline((1, 0), size.x - 2, crate::utils::glyph("─", "-"));
+                    boxed.print_hline((1, size.y - 1), size.x - 2, crate::utils::glyph("─", "-"));
+                    boxed.print_vline((0, 1), size.y - 2, crate::utils::glyph("│", "|"));
+                    boxed.print_vline((size.x - 1, 1), size.y - 2, crate::utils::glyph("│", "|"));
+                    boxed.print((0, 0), crate::utils::glyph("╭", "+"));
+                    boxed.print((size.x - 1, 0), crate::utils::glyph("╮", "+"));
+                    boxed.print((0, size.y - 1), crate::utils::glyph("╰", "+"));
+                    boxed.print((size.x - 1, size.y - 1), crate::utils::glyph("╯", "+"));
                 });
             }
             if inner.x > 0 && inner.y > 0 {
@@ -351,7 +351,7 @@ mod tests {
         assert_eq!(api_status_text(&ApiSession::Active, false), "activa (app compartida)");
         assert_eq!(
             api_status_text(&ApiSession::Expired, false),
-            "Sesión de API vencida — volvé a iniciar sesión"
+            "Sesión de API vencida - volvé a iniciar sesión"
         );
     }
 }
