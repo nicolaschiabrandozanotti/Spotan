@@ -73,8 +73,10 @@ impl Library {
     pub fn new(ev: EventManager, spotify: Spotify, cfg: Arc<Config>) -> Self {
         let user_id = spotify.api.user();
         let display_name = Arc::new(RwLock::new(None));
+        let online = spotify.is_online();
         // fetched in the background, a rate limit would otherwise block startup
-        if !cfg.values().hide_display_names.unwrap_or(false) {
+        if !online {
+        } else if !cfg.values().hide_display_names.unwrap_or(false) {
             if let Some((id, name)) = &cfg.state().display_name
                 && user_id.as_ref() == Some(id)
             {
@@ -111,8 +113,18 @@ impl Library {
             cfg,
         };
 
-        library.update_library(false);
+        if online {
+            library.update_library(false);
+        } else {
+            // Sin Spotify no hay nada que cargar.
+            *library.is_done.write().unwrap() = true;
+        }
         library
+    }
+
+    /// Whether there is a Spotify session behind this library.
+    pub fn is_online(&self) -> bool {
+        self.spotify.is_online()
     }
 
     /// Load cached items from the file at `cache_path` into the given `store`.
@@ -1046,6 +1058,18 @@ fn is_stale(local: &Playlist, remote: &Playlist) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_offline_loads_nothing() {
+        let ev = EventManager::new_for_test();
+        let cfg = Config::new_for_test();
+        let spotify = Spotify::new_for_test(cfg.clone(), ev.clone());
+        let library = Library::new(ev, spotify, cfg);
+        assert!(*library.is_done.read().unwrap());
+        assert!(library.tracks.read().unwrap().is_empty());
+        assert!(library.playlists.read().unwrap().is_empty());
+        assert!(!library.is_online());
+    }
 
     #[test]
     fn fallback_only_with_active_session() {

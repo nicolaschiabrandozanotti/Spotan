@@ -6,12 +6,13 @@ use cursive::traits::{Nameable, Resizable};
 use cursive::utils::markup::StyledString;
 use cursive::view::{View, ViewWrapper};
 use cursive::{Cursive, Printer, Rect, Vec2};
-use cursive::views::{Button, DummyView, EditView, LinearLayout, TextView};
+use cursive::views::{Button, Checkbox, DummyView, EditView, LinearLayout, TextView};
 use librespot_core::authentication::Credentials as RespotCredentials;
 
 use crate::application::UserData;
 use crate::authentication::{self, ApiSession};
 use crate::command::Command;
+use crate::model::track::Source;
 use crate::traits::ViewExt;
 use crate::ui::spoti_background::Background;
 
@@ -29,6 +30,30 @@ const API_ID: &str = "settings_api_id";
 const BTN_SPOTIFY: &str = "settings_btn_spotify";
 const BTN_API: &str = "settings_btn_api";
 const BTN_SHARED: &str = "settings_btn_shared";
+const BTN_ENTER: &str = "settings_btn_enter";
+
+/// Marker left in the start screen's user data by "Entrar sin Spotify".
+pub struct EnterWithoutSpotify;
+
+/// "Entrar sin Spotify" needs at least one external service on.
+pub fn can_enter_without_spotify(services: &[Source]) -> bool {
+    !services.is_empty()
+}
+
+/// A service checkbox: toggling it saves right away and refreshes the enter button.
+fn service_checkbox(source: Source, label: &str) -> LinearLayout {
+    let on = crate::external::enabled().contains(&source);
+    LinearLayout::horizontal()
+        .child(Checkbox::new().with_checked(on).on_change(move |s, on| {
+            match crate::external::set_enabled(source, on) {
+                Ok(()) => set_text(s, MSG, String::new()),
+                Err(e) => set_text(s, MSG, format!("Error: {e}")),
+            }
+            let can = can_enter_without_spotify(&crate::external::enabled());
+            s.call_on_name(BTN_ENTER, |b: &mut Button| b.set_enabled(can));
+        }))
+        .child(TextView::new(format!(" {label}")))
+}
 
 /// Width of the text area and of the Client ID field; the box adds `PAD` around it.
 const CONTENT_WIDTH: usize = 54;
@@ -145,7 +170,7 @@ impl SettingsView {
             layout.add_child(TextView::new("Conectá tu cuenta de Spotify para empezar a escuchar."));
         } else {
             layout.add_child(TextView::new(heading("Cuenta de Spotify")));
-            layout.add_child(TextView::new(account.as_deref().unwrap_or("sin sesión").to_string()));
+            layout.add_child(TextView::new(account.as_deref().unwrap_or("sin sesión de Spotify").to_string()));
         }
         layout.add_child(DummyView);
         let login_label = match (logged_in, start) {
@@ -168,9 +193,17 @@ impl SettingsView {
                         s,
                         // Runs on the login thread: the buttons stay disabled until it ends.
                         move |on_url| on_logged_in(authentication::create_credentials_with(on_url)?),
-                        |s, result| match result {
+                        move |s, result| match result {
                             // Start mode quits right after; keep the buttons disabled.
-                            Ok(()) => set_text(s, MSG, "Sesión iniciada".into()),
+                            Ok(()) if start => set_text(s, MSG, "Sesión iniciada".into()),
+                            // The credentials are saved: relaunch (without logging out) to enter with them.
+                            Ok(()) => {
+                                crate::restart::request_keep_session();
+                                match s.user_data::<UserData>().cloned() {
+                                    Some(data) => data.cmd.handle(s, Command::Quit),
+                                    None => s.quit(),
+                                }
+                            }
                             Err(e) => {
                                 set_enabled(s, true);
                                 set_text(s, MSG, format!("Error: {e}"));
@@ -184,6 +217,18 @@ impl SettingsView {
         if start {
             layout.add_child(DummyView);
             layout.add_child(TextView::new(hint("Se abre el navegador; cuando aceptes, volvé acá.")));
+        }
+        layout.add_child(DummyView);
+        layout.add_child(TextView::new(heading("Otros servicios")));
+        layout.add_child(service_checkbox(Source::YouTube, "YouTube"));
+        layout.add_child(service_checkbox(Source::SoundCloud, "SoundCloud"));
+        if start {
+            let mut enter = Button::new("Entrar sin Spotify", |s| {
+                s.set_user_data(EnterWithoutSpotify);
+                s.quit();
+            });
+            enter.set_enabled(can_enter_without_spotify(&crate::external::enabled()));
+            layout.add_child(enter.with_name(BTN_ENTER));
         }
         if mode == SettingsMode::Screen || logged_in {
             layout.add_child(DummyView);
@@ -342,6 +387,13 @@ mod tests {
                 runner.refresh();
             }
         }
+    }
+
+    #[test]
+    fn start_enter_disabled_without_services() {
+        assert!(!can_enter_without_spotify(&[]));
+        assert!(can_enter_without_spotify(&[Source::YouTube]));
+        assert!(can_enter_without_spotify(&[Source::SoundCloud, Source::YouTube]));
     }
 
     #[test]

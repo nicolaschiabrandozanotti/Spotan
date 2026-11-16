@@ -60,13 +60,30 @@ pub struct UserDataInner {
 /// The global Tokio runtime for running asynchronous tasks.
 pub static ASYNC_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
+/// How the app starts, given the cached Spotify credentials and the enabled external services.
+#[derive(Debug, PartialEq, Eq)]
+enum Startup {
+    Online,
+    /// No Spotify, but YouTube/SoundCloud are on: skip the start screen.
+    Offline,
+    StartScreen,
+}
+
+fn startup_mode(has_credentials: bool, services: &[crate::model::track::Source]) -> Startup {
+    match (has_credentials, services.is_empty()) {
+        (true, _) => Startup::Online,
+        (false, false) => Startup::Offline,
+        (false, true) => Startup::StartScreen,
+    }
+}
+
 /// Standalone login screen shown when there are no (valid) cached credentials. Returns the
-/// credentials once they have connected to Spotify.
+/// credentials once they have connected to Spotify, or `None` for "Entrar sin Spotify".
 fn start_screen(
     configuration: &Arc<Config>,
     theme: &cursive::theme::Theme,
     initial_error: Option<String>,
-) -> Result<Credentials, String> {
+) -> Result<Option<Credentials>, String> {
     let (mut cursive, mut pacing) = create_cursive().map_err(|e| e.to_string())?;
     cursive.set_theme(theme.clone());
     let (tx, rx) = std::sync::mpsc::channel();
@@ -95,10 +112,14 @@ fn start_screen(
         pacing.step(&mut cursive);
     }
     // Closed without logging in: leave quietly once the terminal is restored.
-    Ok(rx.try_recv().unwrap_or_else(|_| {
-        drop(cursive);
-        std::process::exit(0)
-    }))
+    if let Ok(credentials) = rx.try_recv() {
+        return Ok(Some(credentials));
+    }
+    if cursive.take_user_data::<ui::settings::EnterWithoutSpotify>().is_some() {
+        return Ok(None);
+    }
+    drop(cursive);
+    std::process::exit(0)
 }
 
 /// The representation of an ncspot application.
@@ -153,9 +174,10 @@ impl Application {
                 credentials = None;
             }
         }
-        let credentials = match credentials {
-            Some(c) => c,
-            None => start_screen(&configuration, &theme, start_error)?,
+        let credentials = match startup_mode(credentials.is_some(), &crate::external::enabled()) {
+            Startup::Online => credentials,
+            Startup::Offline => None,
+            Startup::StartScreen => start_screen(&configuration, &theme, start_error)?,
         };
 
         // DON'T USE STDOUT AFTER THIS CALL!
@@ -170,8 +192,12 @@ impl Application {
 
         let event_manager = EventManager::new(cursive.cb_sink().clone());
 
-        let mut spotify =
-            spotify::Spotify::new(event_manager.clone(), credentials, configuration.clone())?;
+        let mut spotify = match credentials {
+            Some(credentials) => {
+                spotify::Spotify::new(event_manager.clone(), credentials, configuration.clone())?
+            }
+            None => spotify::Spotify::new_offline(event_manager.clone(), configuration.clone()),
+        };
 
         let library = Arc::new(Library::new(
             event_manager.clone(),
@@ -255,8 +281,16 @@ impl Application {
 
         let settingsview = ui::settings::SettingsView::new(
             ui::settings::SettingsMode::Screen,
-            Some(spotify.api.user().unwrap_or_else(|| "sesión activa".into())),
-            Box::new(|_| Ok(())),
+            spotify
+                .is_online()
+                .then(|| spotify.api.user().unwrap_or_else(|| "sesión activa".into())),
+            // Login from Ajustes (no session yet): store the credentials, then the app relaunches.
+            Box::new({
+                let configuration = configuration.clone();
+                move |credentials| {
+                    Spotify::login_and_store(&configuration, credentials).map_err(|e| e.to_string())
+                }
+            }),
         );
 
         let queueview = ui::queue::QueueView::new(queue.clone(), library.clone());
@@ -390,5 +424,19 @@ impl Application {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::track::Source;
+
+    #[test]
+    fn startup_mode_decides_by_credentials_and_services() {
+        assert_eq!(startup_mode(true, &[]), Startup::Online);
+        assert_eq!(startup_mode(true, &[Source::YouTube]), Startup::Online);
+        assert_eq!(startup_mode(false, &[Source::YouTube]), Startup::Offline);
+        assert_eq!(startup_mode(false, &[]), Startup::StartScreen);
     }
 }

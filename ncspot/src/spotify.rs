@@ -214,6 +214,13 @@ impl Spotify {
             .map(|_| session)
     }
 
+    /// Connect once with the librespot cache so the reusable credentials get stored on disk.
+    pub fn login_and_store(cfg: &config::Config, credentials: Credentials) -> Result<(), librespot_core::Error> {
+        let runtime = ASYNC_RUNTIME.get().unwrap();
+        let _guard = runtime.enter();
+        runtime.block_on(Self::create_session(cfg, credentials)).map(|_| ())
+    }
+
     /// Create a [Session] that respects the user configuration in `cfg` and with the given
     /// credentials.
     async fn create_session(

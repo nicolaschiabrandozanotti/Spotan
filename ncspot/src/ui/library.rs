@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use cursive::Cursive;
-use cursive::view::ViewWrapper;
+use cursive::view::{View, ViewWrapper};
 use strum::IntoEnumIterator;
 
 use crate::command::Command;
@@ -15,9 +15,12 @@ use crate::ui::listview::ListView;
 use crate::ui::playlists::PlaylistsView;
 use crate::ui::tabbedview::TabbedView;
 
+const OFFLINE_HINT: &str = "Iniciá sesión con Spotify en Ajustes (F4) para ver tu biblioteca";
+
 pub struct LibraryView {
     tabs: TabbedView,
     display_name: Arc<RwLock<Option<String>>>,
+    offline: bool,
 }
 
 impl LibraryView {
@@ -61,12 +64,20 @@ impl LibraryView {
         Self {
             tabs: tabview,
             display_name: library.display_name.clone(),
+            offline: !library.is_online(),
         }
     }
 }
 
 impl ViewWrapper for LibraryView {
     wrap_impl!(self.tabs: TabbedView);
+
+    fn wrap_draw(&self, printer: &cursive::Printer) {
+        self.tabs.draw(printer);
+        if self.offline {
+            printer.print((1, 3), OFFLINE_HINT);
+        }
+    }
 }
 
 impl ViewExt for LibraryView {
