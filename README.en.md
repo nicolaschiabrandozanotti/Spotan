@@ -4,7 +4,7 @@
 
 <img src="docs/img/banner.svg" alt="Spoti" width="720">
 
-**A lightweight Spotify client in Rust with synced lyrics and an animated background.**
+**A lightweight Spotify, YouTube and SoundCloud client in Rust with synced lyrics and an animated background.**
 
 ![Rust](https://img.shields.io/badge/Rust-1.99-orange?logo=rust)
 ![MIT License](https://img.shields.io/badge/license-MIT-green)
@@ -14,11 +14,12 @@
 
 ## What it is
 
-Spoti is a lightweight Spotify client written in Rust. It started as a fork of [ncspot](https://github.com/hrkfdn/ncspot) 1.5.1 and plays audio through [librespot](https://github.com/librespot-org/librespot). **A Spotify Premium account is required.**
+Spoti is a lightweight Spotify client written in Rust. It started as a fork of [ncspot](https://github.com/hrkfdn/ncspot) 1.5.1 and plays audio through [librespot](https://github.com/librespot-org/librespot). Spotify needs a **Premium** account; YouTube and SoundCloud work without an account, so you can also use Spoti without Spotify.
 
 ## Features
 
 - 🪟 **Native Wayland window**, drawn with Cairo and shared memory: no terminal, no GTK.
+- ▶️ **YouTube and SoundCloud** (optional, no account): search and play from all three services in the same list and the same queue. See [YouTube and SoundCloud](#youtube-and-soundcloud).
 - 🎤 **Synced lyrics** from [LRCLIB](https://lrclib.net), toggled with `Shift+L`. In narrow windows it opens a full-screen lyrics panel.
 - 🌌 **Animated Unicode braille background** (toggle with `v`).
 - 🎨 **Athena palette**, read live from the `[theme]` section of ncspot's `config.toml`.
@@ -47,7 +48,7 @@ Playing: ~0.7% of one core. Paused: ~0.15%. **320 kbps** bitrate and **gapless**
 
 ## Download and install
 
-You need **Spotify Premium**. Every version is on [Releases](https://github.com/nicolaschiabrandozanotti/Spotan/releases).
+Spotify needs **Premium**; YouTube and SoundCloud need no account. Every version is on [Releases](https://github.com/nicolaschiabrandozanotti/Spotan/releases).
 
 ### Linux (x86_64) — one command
 
@@ -66,6 +67,24 @@ irm https://github.com/nicolaschiabrandozanotti/Spotan/releases/latest/download/
 To open it again: `%LOCALAPPDATA%\Spoti\spoti-windows-x86_64\spoti.bat`. You can also download the `.zip` from Releases, unzip it and double-click `spoti.bat`; SmartScreen may warn because the executable is unsigned (*More info → Run anyway*). On first run it copies the theme to `%APPDATA%\ncspot\config.toml` without overwriting an existing config and opens Windows Terminal if available.
 
 On first run Spoti opens a start screen with a **Iniciar sesión con Spotify** (log in) button: your browser opens, you accept and come back to Spoti, which loads your music and library. The session is saved.
+
+## YouTube and SoundCloud
+
+They are **off** by default. To use them:
+
+1. Open **Settings** (`F4`) and tick **YouTube** and/or **SoundCloud** under *Other services* (the labels are in Spanish: *Otros servicios*). It is saved right away, no restart.
+2. Go to **Search** as usual. Each track shows where it comes from: `[S]` Spotify, `[YT]` YouTube, `[SC]` SoundCloud.
+3. With two or more services on, the **`[1 Spotify] [2 YouTube] [3 SoundCloud]`** bar shows above the results: keys `1`, `2` and `3` (or a click) show or hide each service.
+4. Play, seek, pause and mix services in the queue: it moves on to the next track by itself.
+
+Without Spotify: on the start screen tick YouTube and/or SoundCloud and press **Entrar sin Spotify** (*Enter without Spotify*); you can log in to Spotify later from Settings.
+
+Good to know:
+- **No YouTube or SoundCloud account needed.** Spoti decodes the audio itself (AAC); no yt-dlp, mpv or browser.
+- When off they **cost nothing**: the YouTube/SoundCloud engine starts with the first track from those services (about 2 MiB more RAM while playing) and, if you turn them off, shuts down on the next track.
+- No YouTube/SoundCloud login or library yet: search and play only. *Similar tracks* and *Add to playlist* are Spotify-only.
+- On SoundCloud some tracks are 30 s previews (Go+ only); encrypted tracks can't be played and are skipped.
+- If YouTube or SoundCloud change something on their side, it may stop working until the next Spoti release.
 
 ## Settings and your own Spotify app (optional)
 
@@ -107,6 +126,7 @@ These are ncspot's default keybindings plus Spoti's additions.
 | `[` / `]` | Lyrics sync offset (250 ms) |
 | `v` | Toggle braille background |
 | `q` / `Esc` | Close lyrics / quit |
+| `1` / `2` / `3` | In search results: show or hide Spotify / YouTube / SoundCloud |
 | `?` | Help |
 
 ## Build from source
@@ -134,6 +154,7 @@ Spoti stands on other people's work:
 
 - **[ncspot](https://github.com/hrkfdn/ncspot)**, by Henrik Friedrichsen and contributors: the base this project started from.
 - [librespot](https://github.com/librespot-org/librespot): the playback engine.
+- [Symphonia](https://github.com/pdeljanov/Symphonia): AAC decoding for YouTube and SoundCloud.
 - [cursive](https://github.com/gyscos/cursive) and [ratatui](https://ratatui.rs): terminal UI.
 - [Smithay Client Toolkit](https://github.com/Smithay/client-toolkit): Wayland client.
 - [LRCLIB](https://lrclib.net): synced lyrics.
