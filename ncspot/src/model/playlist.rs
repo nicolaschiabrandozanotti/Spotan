@@ -44,7 +44,14 @@ impl Playlist {
             return;
         }
 
-        self.tracks = self.get_all_tracks(spotify);
+        self.tracks = if self.source == Source::SoundCloud {
+            crate::external::sc_library::fetch_playlist_tracks(&self.id)
+                .map(|t| t.into_iter().map(Playable::Track).collect())
+                .map_err(|e| warn!("Failed to load the tracks of playlist {}: {e}", self.name))
+                .ok()
+        } else {
+            self.get_all_tracks(spotify)
+        };
         if let Some(tracks) = &self.tracks {
             // unavailable tracks are skipped, and is_loaded needs the loaded count
             self.num_tracks = tracks.len();
@@ -69,6 +76,9 @@ impl Playlist {
     }
 
     pub fn delete_track(&mut self, index: usize, spotify: Spotify, library: &Library) -> bool {
+        if self.source != Source::Spotify {
+            return false;
+        }
         let Some(playable) = self.tracks.as_ref().and_then(|t| t.get(index)).cloned() else {
             return false;
         };
@@ -97,6 +107,9 @@ impl Playlist {
     }
 
     pub fn append_tracks(&mut self, new_tracks: &[Playable], spotify: &Spotify, library: &Library) {
+        if self.source != Source::Spotify {
+            return;
+        }
         let mut has_modified = false;
 
         if spotify
@@ -222,6 +235,10 @@ impl ListItem for Playlist {
     }
 
     fn display_right(&self, library: &Library) -> String {
+        if self.source != Source::Spotify {
+            let num_tracks = self.tracks.as_ref().map_or(self.num_tracks, |t| t.len());
+            return format!("[{}] {num_tracks:>4} tracks", self.source.label());
+        }
         let saved = if library.is_saved_playlist(self) {
             if library.cfg.values().use_nerdfont.unwrap_or(false) {
                 "\u{f012c} "
@@ -270,6 +287,9 @@ impl ListItem for Playlist {
     }
 
     fn toggle_saved(&mut self, library: &Library) {
+        if self.source != Source::Spotify {
+            return;
+        }
         // Don't allow users to unsave their own playlists with one keypress
         if !library.is_followed_playlist(self) {
             return;
@@ -283,10 +303,16 @@ impl ListItem for Playlist {
     }
 
     fn save(&mut self, library: &Library) {
+        if self.source != Source::Spotify {
+            return;
+        }
         library.follow_playlist(self.clone());
     }
 
     fn unsave(&mut self, library: &Library) {
+        if self.source != Source::Spotify {
+            return;
+        }
         library.delete_playlist(&self.id);
     }
 
@@ -347,6 +373,9 @@ impl ListItem for Playlist {
     }
 
     fn is_saved(&self, library: &Library) -> Option<bool> {
+        if self.source != Source::Spotify {
+            return None;
+        }
         // save status of personal playlists can't be toggled for safety
         if !library.is_followed_playlist(self) {
             return None;

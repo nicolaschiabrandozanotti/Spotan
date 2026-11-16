@@ -109,6 +109,7 @@ pub fn parse_tracks(json: &Value) -> Vec<Track> {
 const PROFILE_FILE: &str = "soundcloud_profile";
 const MAX_PAGES: usize = 100;
 
+#[derive(Clone, Debug)]
 pub struct ScUser {
     pub id: u64,
     pub username: String,

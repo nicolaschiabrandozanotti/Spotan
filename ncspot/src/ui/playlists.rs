@@ -59,6 +59,16 @@ impl ViewExt for PlaylistsView {
 
     fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
         if let Command::Delete = cmd {
+            let is_sc = self
+                .library
+                .playlists
+                .read()
+                .unwrap()
+                .get(self.list.get_selected_index())
+                .is_some_and(|p| p.source != crate::model::track::Source::Spotify);
+            if is_sc {
+                return Err("SoundCloud: solo lectura".into());
+            }
             if let Some(dialog) = self.delete_dialog() {
                 s.add_layer(dialog);
             }

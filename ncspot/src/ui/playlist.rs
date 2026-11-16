@@ -79,6 +79,9 @@ impl ViewExt for PlaylistView {
 
     fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
         if let Command::Delete = cmd {
+            if self.playlist.source != crate::model::track::Source::Spotify {
+                return Err("SoundCloud: solo lectura".into());
+            }
             let pos = self.list.get_selected_index();
 
             return if self
