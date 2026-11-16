@@ -16,14 +16,12 @@ use crate::spotify_url::SpotifyUrl;
 use crate::traits::{ListItem, ViewExt};
 use crate::ui::listview::ListView;
 use crate::ui::pagination::Pagination;
-use crate::ui::source_filter::{SourceFilter, build_results, merge_and_filter};
+use crate::ui::source_filter::{FilteredList, SourceFilter, build_results, merge_and_filter};
 use crate::ui::tabbedview::TabbedView;
 use cursive::Cursive;
 use cursive::view::ViewWrapper;
 use rspotify::model::SearchType;
 use rspotify::model::search::SearchResult;
-use cursive::event::{Event, EventResult};
-use cursive::{Printer, Vec2, View};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -94,64 +92,6 @@ fn fetch_page(spotify: &Spotify, source: Source, query: &str, token: Option<&str
     }
 }
 
-/// Pestaña Tracks: barra de filtros (si hay 2+ servicios) encima de la lista.
-struct TracksTab {
-    bar: SourceFilter,
-    list: ListView<Track>,
-}
-
-impl TracksTab {
-    fn bar_height(&self) -> usize {
-        usize::from(self.bar.visible())
-    }
-}
-
-impl View for TracksTab {
-    fn required_size(&mut self, constraint: Vec2) -> Vec2 {
-        let l = self.list.required_size(constraint);
-        Vec2::new(l.x, l.y + self.bar_height())
-    }
-
-    fn layout(&mut self, size: Vec2) {
-        let h = self.bar_height();
-        self.bar.layout(Vec2::new(size.x, h));
-        self.list.layout(Vec2::new(size.x, size.y.saturating_sub(h)));
-    }
-
-    fn draw(&self, printer: &Printer) {
-        let h = self.bar_height();
-        self.bar.draw(&printer.cropped((printer.size.x, h)));
-        self.list.draw(&printer.offset((0, h)));
-    }
-
-    fn on_event(&mut self, event: Event) -> EventResult {
-        if let Event::Char(c) = event
-            && self.bar.toggle_digit(c)
-        {
-            return EventResult::consumed();
-        }
-        let h = self.bar_height();
-        let on_bar = event
-            .mouse_position()
-            .zip(match event { Event::Mouse { offset, .. } => Some(offset), _ => None })
-            .is_some_and(|(p, o)| p.y.saturating_sub(o.y) < h);
-        if on_bar {
-            return self.bar.on_event(event);
-        }
-        self.list.on_event(event.relativized((0, h)))
-    }
-}
-
-impl ViewExt for TracksTab {
-    fn title(&self) -> String {
-        self.list.title()
-    }
-
-    fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
-        self.list.on_command(s, cmd)
-    }
-}
-
 pub struct SearchResultsView {
     search_term: String,
     results_tracks: Arc<RwLock<Vec<Track>>>,
@@ -206,7 +146,7 @@ impl SearchResultsView {
                 refresh(&state, &results, &pagination);
             });
         }
-        let tracks_tab = TracksTab { bar, list: list_tracks };
+        let tracks_tab = FilteredList::new(bar, list_tracks);
         let list_albums = ListView::new(results_albums.clone(), queue.clone(), library.clone());
         let pagination_albums = list_albums.get_pagination().clone();
         let list_artists = ListView::new(results_artists.clone(), queue.clone(), library.clone());

@@ -1,21 +1,59 @@
 //! Barra `[Spotify] [YouTube] [SoundCloud]` de la pestaña Tracks y la lógica pura
 //! para mezclar y filtrar resultados por servicio.
 
+use crate::command::Command;
+use crate::commands::CommandResult;
 use crate::external::Page;
+use crate::library::Library;
+use crate::model::playlist::Playlist;
 use crate::model::track::{Source, Track};
+use crate::traits::{ListItem, ViewExt};
+use crate::ui::listview::ListView;
 use cursive::event::{Event, EventResult, MouseButton, MouseEvent};
 use cursive::theme::ColorStyle;
-use cursive::{Printer, Vec2, View};
+use cursive::{Cursive, Printer, Vec2, View};
 use std::collections::HashSet;
 
 const ORDER: [Source; 3] = [Source::Spotify, Source::YouTube, Source::SoundCloud];
 
+pub trait Sourced {
+    fn source(&self) -> Source;
+}
+
+impl Sourced for Track {
+    fn source(&self) -> Source {
+        self.source
+    }
+}
+
+impl Sourced for Playlist {
+    fn source(&self) -> Source {
+        self.source
+    }
+}
+
+/// Servicios con contenido en la biblioteca: Spotify con sesión, SoundCloud con perfil.
+pub fn library_sources_from(online: bool, sc_active: bool) -> Vec<Source> {
+    let mut v = Vec::new();
+    if online {
+        v.push(Source::Spotify);
+    }
+    if sc_active {
+        v.push(Source::SoundCloud);
+    }
+    v
+}
+
+pub fn library_sources(library: &Library) -> Vec<Source> {
+    library_sources_from(library.is_online(), library.sc_active())
+}
+
 /// Orden estable Spotify -> YouTube -> SoundCloud (cada uno en su orden); solo los `on`.
-pub fn merge_and_filter(all: &[Track], on: &HashSet<Source>) -> Vec<Track> {
+pub fn merge_and_filter<T: Sourced + Clone>(all: &[T], on: &HashSet<Source>) -> Vec<T> {
     ORDER
         .iter()
         .filter(|s| on.contains(s))
-        .flat_map(|s| all.iter().filter(move |t| t.source == *s))
+        .flat_map(|s| all.iter().filter(move |t| t.source() == *s))
         .cloned()
         .collect()
 }
@@ -44,6 +82,14 @@ impl SourceFilter {
     pub fn new(active: Vec<Source>) -> Self {
         let on = active.iter().copied().collect();
         Self { active, on, on_change: None }
+    }
+
+    pub fn on(&self) -> &HashSet<Source> {
+        &self.on
+    }
+
+    pub fn active(&self) -> &[Source] {
+        &self.active
     }
 
     pub fn on_change(&mut self, cb: impl Fn(&HashSet<Source>) + Send + Sync + 'static) {
@@ -129,6 +175,75 @@ impl View for SourceFilter {
     }
 }
 
+/// Se llama al inicio de cada `layout`: la biblioteca recalcula la lista derivada acá.
+type OnLayout<T> = Box<dyn FnMut(&mut SourceFilter, &mut ListView<T>) + Send + Sync>;
+
+/// Pestaña con barra de filtros (si hay 2+ servicios) encima de la lista.
+pub struct FilteredList<T: ListItem + Clone> {
+    pub bar: SourceFilter,
+    pub list: ListView<T>,
+    pub on_layout: Option<OnLayout<T>>,
+}
+
+impl<T: ListItem + Clone> FilteredList<T> {
+    pub fn new(bar: SourceFilter, list: ListView<T>) -> Self {
+        Self { bar, list, on_layout: None }
+    }
+
+    fn bar_height(&self) -> usize {
+        usize::from(self.bar.visible())
+    }
+}
+
+impl<T: ListItem + Clone> View for FilteredList<T> {
+    fn required_size(&mut self, constraint: Vec2) -> Vec2 {
+        let l = self.list.required_size(constraint);
+        Vec2::new(l.x, l.y + self.bar_height())
+    }
+
+    fn layout(&mut self, size: Vec2) {
+        if let Some(f) = &mut self.on_layout {
+            f(&mut self.bar, &mut self.list);
+        }
+        let h = self.bar_height();
+        self.bar.layout(Vec2::new(size.x, h));
+        self.list.layout(Vec2::new(size.x, size.y.saturating_sub(h)));
+    }
+
+    fn draw(&self, printer: &Printer) {
+        let h = self.bar_height();
+        self.bar.draw(&printer.cropped((printer.size.x, h)));
+        self.list.draw(&printer.offset((0, h)));
+    }
+
+    fn on_event(&mut self, event: Event) -> EventResult {
+        if let Event::Char(c) = event
+            && self.bar.toggle_digit(c)
+        {
+            return EventResult::consumed();
+        }
+        let h = self.bar_height();
+        let on_bar = event
+            .mouse_position()
+            .zip(match event { Event::Mouse { offset, .. } => Some(offset), _ => None })
+            .is_some_and(|(p, o)| p.y.saturating_sub(o.y) < h);
+        if on_bar {
+            return self.bar.on_event(event);
+        }
+        self.list.on_event(event.relativized((0, h)))
+    }
+}
+
+impl<T: ListItem + Clone> ViewExt for FilteredList<T> {
+    fn title(&self) -> String {
+        self.list.title()
+    }
+
+    fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
+        self.list.on_command(s, cmd)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,5 +314,34 @@ mod tests {
         f.on_change(move |on| *s2.lock().unwrap() = Some(on.clone()));
         f.toggle(1);
         assert_eq!(seen.lock().unwrap().clone().unwrap(), HashSet::from([Source::Spotify]));
+    }
+
+    fn pl(source: Source, id: &str) -> Playlist {
+        Playlist {
+            id: id.into(),
+            name: id.into(),
+            owner_id: String::new(),
+            owner_name: None,
+            snapshot_id: String::new(),
+            num_tracks: 0,
+            tracks: None,
+            collaborative: false,
+            source,
+        }
+    }
+
+    #[test]
+    fn merge_works_for_playlists() {
+        let all = vec![pl(Source::SoundCloud, "s1"), pl(Source::Spotify, "p1")];
+        let on: HashSet<_> = [Source::Spotify, Source::SoundCloud].into();
+        assert_eq!(merge_and_filter(&all, &on).iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["p1", "s1"]);
+    }
+
+    #[test]
+    fn library_sources_hides_sc_when_off() {
+        assert_eq!(library_sources_from(true, false), [Source::Spotify]);
+        assert_eq!(library_sources_from(true, true), [Source::Spotify, Source::SoundCloud]);
+        assert_eq!(library_sources_from(false, true), [Source::SoundCloud]);
+        assert!(!SourceFilter::new(library_sources_from(true, false)).visible());
     }
 }

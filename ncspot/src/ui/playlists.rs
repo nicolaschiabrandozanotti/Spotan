@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use cursive::Cursive;
 use cursive::view::{Margins, ViewWrapper};
@@ -10,25 +10,27 @@ use crate::library::Library;
 use crate::model::playlist::Playlist;
 use crate::queue::Queue;
 use crate::traits::ViewExt;
-use crate::ui::listview::ListView;
+use crate::ui::library::mixed_list;
 use crate::ui::modal::Modal;
+use crate::ui::source_filter::FilteredList;
 
 pub struct PlaylistsView {
-    list: ListView<Playlist>,
+    list: FilteredList<Playlist>,
+    /// Lista derivada (Spotify + SoundCloud filtrados): la selección se resuelve acá.
+    shown: Arc<RwLock<Vec<Playlist>>>,
     library: Arc<Library>,
 }
 
 impl PlaylistsView {
     pub fn new(queue: Arc<Queue>, library: Arc<Library>) -> Self {
-        Self {
-            list: ListView::new(library.playlists.clone(), queue, library.clone()),
-            library,
-        }
+        let (list, shown) =
+            mixed_list(queue, library.clone(), library.playlists.clone(), library.sc_playlists.clone());
+        Self { list, shown, library }
     }
 
     pub fn delete_dialog(&mut self) -> Option<Modal<Dialog>> {
-        let playlists = self.library.playlists.read().unwrap();
-        let current = playlists.get(self.list.get_selected_index());
+        let playlists = self.shown.read().unwrap();
+        let current = playlists.get(self.list.list.get_selected_index());
 
         if let Some(playlist) = current {
             let library = self.library.clone();
@@ -49,7 +51,7 @@ impl PlaylistsView {
 }
 
 impl ViewWrapper for PlaylistsView {
-    wrap_impl!(self.list: ListView<Playlist>);
+    wrap_impl!(self.list: FilteredList<Playlist>);
 }
 
 impl ViewExt for PlaylistsView {
@@ -60,11 +62,10 @@ impl ViewExt for PlaylistsView {
     fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
         if let Command::Delete = cmd {
             let is_sc = self
-                .library
-                .playlists
+                .shown
                 .read()
                 .unwrap()
-                .get(self.list.get_selected_index())
+                .get(self.list.list.get_selected_index())
                 .is_some_and(|p| p.is_read_only());
             if is_sc {
                 return Err("SoundCloud: solo lectura".into());
