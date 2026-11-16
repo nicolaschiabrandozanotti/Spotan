@@ -18,7 +18,7 @@ use crate::model::episode::Episode;
 use crate::model::playable::Playable;
 use crate::model::playlist::Playlist;
 use crate::model::show::Show;
-use crate::model::track::Track;
+use crate::model::track::{Source, Track};
 use crate::queue::RepeatSetting;
 use crate::spotify::UriType;
 use crate::spotify_url::SpotifyUrl;
@@ -131,8 +131,9 @@ impl MprisPlayer {
         // This is necessary because SimplifiedTrack objects don't contain a cover_url
         let playable_full = playable.and_then(|p| match p {
             Playable::Track(track) => {
-                if track.cover_url.is_some() {
-                    // We already have `cover_url`, no need to fetch the full track
+                if track.cover_url.is_some() || track.source != Source::Spotify {
+                    // We already have `cover_url` (or the track isn't Spotify's, so the Web API
+                    // doesn't know it), no need to fetch the full track
                     Some(Playable::Track(track))
                 } else {
                     self.spotify
@@ -153,7 +154,7 @@ impl MprisPlayer {
                 "/org/ncspot/{}",
                 playable
                     .filter(|t| t.id().is_some())
-                    .map(|t| t.uri().replace(':', "/"))
+                    .map(|t| track_path_suffix(&t.uri(), t.source()))
                     .unwrap_or_else(|| String::from("0"))
             ))),
         );
@@ -573,4 +574,31 @@ pub fn instance_bus_name() -> String {
         "org.mpris.MediaPlayer2.ncspot.instance{}",
         std::process::id()
     )
+}
+
+/// Object paths only allow [A-Za-z0-9_]: Spotify uris keep their `/` form, other services
+/// (YouTube ids contain `-`) get every other byte escaped as `_xx`.
+fn track_path_suffix(uri: &str, source: Source) -> String {
+    if source == Source::Spotify {
+        return uri.replace(':', "/");
+    }
+    uri.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => (b as char).to_string(),
+            _ => format!("_{b:02x}"),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_track_path_is_a_valid_object_path() {
+        let p = track_path_suffix("youtube:track:ab-_9", Source::YouTube);
+        assert!(p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'), "{p}");
+        assert!(ObjectPath::try_from(format!("/org/ncspot/{p}")).is_ok());
+        assert_eq!(track_path_suffix("spotify:track:abc", Source::Spotify), "spotify/track/abc");
+    }
 }
