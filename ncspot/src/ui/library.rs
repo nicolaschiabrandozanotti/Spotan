@@ -165,7 +165,7 @@ impl ViewWrapper for LibraryView {
 
     fn wrap_draw(&self, printer: &cursive::Printer) {
         self.tabs.draw(printer);
-                let online = self.library.is_online();
+        let online = self.library.is_online();
         let hint = hint_for(online, !online && self.library.sc_active(), self.tabs.selected_name());
         if let Some(hint) = hint {
             printer.print((1, 3), hint);

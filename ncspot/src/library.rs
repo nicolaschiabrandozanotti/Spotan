@@ -259,7 +259,8 @@ impl Library {
     /// Se prendió o apagó SoundCloud en Ajustes: las vistas se recalculan (la caché queda).
     pub fn sc_visibility_changed(&self) {
         self.bump_generation();
-        if self.sc_active() {
+        // el perfil pudo guardarse con SoundCloud apagado: update_soundcloud lo detecta
+        if crate::external::enabled().contains(&Source::SoundCloud) {
             self.update_soundcloud();
         }
     }
