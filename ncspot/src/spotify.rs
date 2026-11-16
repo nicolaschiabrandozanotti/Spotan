@@ -414,20 +414,20 @@ impl Spotify {
     /// Load `track` into the [Player]. Start playing immediately if
     /// `start_playing` is true. Start playing from `position_ms` in the song.
     pub fn load(&self, track: &Playable, start_playing: bool, position_ms: u32) {
+        self.load_with(track, start_playing, position_ms, &crate::external::enabled());
+    }
+
+    fn load_with(&self, track: &Playable, start_playing: bool, position_ms: u32, enabled: &[Source]) {
         info!("loading track: {track:?}");
 
-        if !track.is_playable() {
+        // not playable, no Spotify session, or its service is off
+        if !self.can_play_with(track, enabled) {
             warn!("track {track:?} can not be played, skipping..");
             self.events.send(Event::Player(PlayerEvent::FinishedTrack));
             return;
         }
 
         let source = track.source();
-        if source == Source::Spotify && !self.is_online() {
-            warn!("no Spotify session, skipping {track:?}");
-            self.events.send(Event::Player(PlayerEvent::FinishedTrack));
-            return;
-        }
         *self.current_source.write().unwrap() = source;
 
         match (source, track) {
@@ -760,6 +760,15 @@ mod tests {
     }
 
     #[test]
+    fn load_refuses_external_track_of_disabled_service() {
+        let (spotify, events, _keep) = offline();
+        spotify.load_with(&external_track(Source::YouTube), true, 0, &[Source::SoundCloud]);
+        let got: Vec<_> = events.msg_iter().collect();
+        assert!(matches!(got.as_slice(), [Event::Player(PlayerEvent::FinishedTrack)]));
+        assert!(spotify.external.lock().unwrap().is_none());
+    }
+
+    #[test]
     fn can_play_needs_online_spotify_or_enabled_service() {
         let (spotify, _events, _keep) = offline();
         let sp = Playable::Track(Track::external(
@@ -797,9 +806,10 @@ mod tests {
             65535,
             crate::external::player::tests::tone_resolver(),
         ));
-        spotify.load(&external_track(Source::YouTube), false, 0);
+        let on = [Source::YouTube, Source::SoundCloud];
+        spotify.load_with(&external_track(Source::YouTube), false, 0, &on);
         assert_eq!(*spotify.current_source.read().unwrap(), Source::YouTube);
-        spotify.load(&external_track(Source::SoundCloud), false, 0);
+        spotify.load_with(&external_track(Source::SoundCloud), false, 0, &on);
         assert_eq!(*spotify.current_source.read().unwrap(), Source::SoundCloud);
     }
 
