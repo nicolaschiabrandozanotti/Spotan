@@ -235,7 +235,8 @@ impl Library {
             if sc_library::profile().as_deref() == Some(url.as_str()) {
                 match result {
                     Ok((data, user)) => {
-                        library.apply_sc_result(&url, Ok(data));
+                        // los álbumes se descartan hasta la Tarea 3 (sc_albums)
+                        library.apply_sc_result(&url, Ok((data.tracks, data.playlists)));
                         *library.sc_status.write().unwrap() = Some(Ok(user));
                     }
                     Err(e) => {

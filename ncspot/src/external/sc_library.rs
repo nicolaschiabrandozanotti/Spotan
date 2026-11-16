@@ -9,6 +9,7 @@ use url::Url;
 
 use super::soundcloud::{api, get_json, parse_track, ScError, API};
 use crate::config::config_path;
+use crate::model::album::Album;
 use crate::model::playlist::Playlist;
 use crate::model::track::{Source, Track};
 
@@ -71,20 +72,58 @@ pub fn parse_playlist(p: &Value) -> Option<Playlist> {
     })
 }
 
-/// Playlists propias (`/users/{id}/playlists`).
-pub fn parse_playlists(json: &Value) -> (Vec<Playlist>, Option<String>) {
-    (collection(json).filter_map(parse_playlist).collect(), next_href(json))
+/// Un set de SoundCloud: playlist común o álbum/EP/single.
+pub enum ScSet {
+    List(Playlist),
+    Album(Album),
 }
 
-/// Playlists guardadas: solo los items de `/likes` con clave `playlist`.
-pub fn parse_liked_playlists(json: &Value) -> (Vec<Playlist>, Option<String>) {
-    (collection(json).filter_map(|i| parse_playlist(i.get("playlist")?)).collect(), next_href(json))
+pub fn parse_set(p: &Value) -> Option<ScSet> {
+    let is_album = p["is_album"].as_bool() == Some(true)
+        || matches!(p["set_type"].as_str(), Some("album" | "ep" | "single" | "compilation"));
+    if !is_album {
+        return parse_playlist(p).map(ScSet::List);
+    }
+    let year = ["release_date", "published_at", "created_at", "last_modified"]
+        .iter()
+        .filter_map(|k| p[*k].as_str())
+        .find(|d| !d.is_empty())
+        .map(|d| d.chars().take(4).collect())
+        .unwrap_or_default();
+    Some(ScSet::Album(Album::new_external(
+        Source::SoundCloud,
+        p["id"].as_u64()?.to_string(),
+        p["title"].as_str()?.to_string(),
+        p["user"]["username"].as_str().map(String::from),
+        year,
+        p["artwork_url"].as_str().map(String::from),
+        p["permalink_url"].as_str().map(String::from),
+        p["track_count"].as_u64().unwrap_or(0) as usize,
+    )))
 }
 
-/// Propias primero, después guardadas, sin repetir id.
-pub fn merge_playlists(own: Vec<Playlist>, liked: Vec<Playlist>) -> Vec<Playlist> {
-    let mut seen = HashSet::new();
-    own.into_iter().chain(liked).filter(|p| seen.insert(p.id.clone())).collect()
+/// Sets propios (`/users/{id}/playlists`).
+pub fn parse_playlists(json: &Value) -> (Vec<ScSet>, Option<String>) {
+    (collection(json).filter_map(parse_set).collect(), next_href(json))
+}
+
+/// Sets guardados: solo los items de `/likes` con clave `playlist`.
+pub fn parse_liked_playlists(json: &Value) -> (Vec<ScSet>, Option<String>) {
+    (collection(json).filter_map(|i| parse_set(i.get("playlist")?)).collect(), next_href(json))
+}
+
+/// Propios primero, después guardados, sin repetir id dentro de cada tipo.
+pub fn split_sets(own: Vec<ScSet>, liked: Vec<ScSet>) -> (Vec<Playlist>, Vec<Album>) {
+    let (mut lists, mut albums) = (Vec::new(), Vec::new());
+    let (mut seen_l, mut seen_a) = (HashSet::new(), HashSet::new());
+    for set in own.into_iter().chain(liked) {
+        match set {
+            ScSet::List(p) if seen_l.insert(p.id.clone()) => lists.push(p),
+            ScSet::Album(a) if seen_a.insert(a.id.clone()) => albums.push(a),
+            _ => {}
+        }
+    }
+    (lists, albums)
 }
 
 /// Ids de todos los temas de una playlist, en orden, y los que ya vienen completos
@@ -152,12 +191,19 @@ fn all_pages<T>(first: String, parse: impl Fn(&Value) -> (Vec<T>, Option<String>
     Err("SoundCloud devolvió demasiadas páginas".into())
 }
 
-pub fn fetch_library(user_id: u64) -> Result<(Vec<Track>, Vec<Playlist>), String> {
+pub struct ScLibrary {
+    pub tracks: Vec<Track>,
+    pub playlists: Vec<Playlist>,
+    pub albums: Vec<Album>,
+}
+
+pub fn fetch_library(user_id: u64) -> Result<ScLibrary, String> {
     let list = |what: &str| format!("{API}/users/{user_id}/{what}?limit=200&linked_partitioning=1");
     let likes = all_pages(list("track_likes"), parse_track_likes)?;
     let own = all_pages(list("playlists"), parse_playlists)?;
     let saved = all_pages(list("likes"), parse_liked_playlists)?;
-    Ok((likes, merge_playlists(own, saved)))
+    let (playlists, albums) = split_sets(own, saved);
+    Ok(ScLibrary { tracks: likes, playlists, albums })
 }
 
 pub fn fetch_playlist_tracks(id: &str) -> Result<Vec<Track>, String> {
@@ -236,28 +282,59 @@ mod tests {
         assert!(next.is_some());
     }
 
+    fn ids(sets: Vec<ScSet>) -> Vec<String> {
+        sets.into_iter()
+            .map(|s| match s {
+                ScSet::List(p) => p.id,
+                ScSet::Album(a) => a.id.unwrap(),
+            })
+            .collect()
+    }
+
     #[test]
     fn liked_playlists_skip_tracks() {
         let (p, _) = parse_liked_playlists(&fx("sc_likes"));
-        assert_eq!(p.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["272741983", "729308781"]);
+        assert_eq!(ids(p), ["272741983", "729308781"]);
     }
 
     #[test]
     fn own_playlists() {
         let (p, next) = parse_playlists(&fx("sc_playlists"));
-        assert_eq!((p[0].id.as_str(), p[0].name.as_str(), p[0].num_tracks), ("2050462", "Ecclesia Inspiration", 7));
-        assert_eq!(p[0].owner_name.as_deref(), Some("Forss"));
-        assert_eq!(p[0].source, Source::SoundCloud);
-        assert!(p[0].tracks.is_none() && next.is_none());
+        let Some(ScSet::List(p)) = p.into_iter().next() else { panic!("playlist") };
+        assert_eq!((p.id.as_str(), p.name.as_str(), p.num_tracks), ("2050462", "Ecclesia Inspiration", 7));
+        assert_eq!(p.owner_name.as_deref(), Some("Forss"));
+        assert_eq!(p.source, Source::SoundCloud);
+        assert!(p.tracks.is_none() && next.is_none());
     }
 
     #[test]
-    fn merge_playlists_dedups_by_id() {
+    fn split_sets_dedups_by_id() {
         let (own, _) = parse_playlists(&fx("sc_playlists"));
-        let mut liked = own[..1].to_vec();
+        let (mut liked, _) = parse_playlists(&fx("sc_playlists"));
         liked.extend(parse_liked_playlists(&fx("sc_likes")).0);
-        let ids: Vec<_> = merge_playlists(own, liked).into_iter().map(|p| p.id).collect();
-        assert_eq!(ids, ["2050462", "1815863", "272741983", "729308781"]);
+        let (lists, _) = split_sets(own, liked);
+        assert_eq!(lists.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["2050462", "272741983", "729308781"]);
+    }
+
+    #[test]
+    fn album_goes_to_albums_once() {
+        let (own, _) = parse_playlists(&fx("sc_playlists"));
+        let (liked, _) = parse_playlists(&fx("sc_playlists")); // el mismo álbum también con Like
+        let (lists, albums) = split_sets(own, liked);
+        assert_eq!(lists.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["2050462"]);
+        assert_eq!(albums.len(), 1);
+        let a = &albums[0];
+        assert_eq!((a.id.as_deref(), a.title.as_str(), a.year.as_str()), (Some("1815863"), "Ecclesia", "2015"));
+        assert_eq!(a.artists, ["Forss"]);
+        assert_eq!(a.source, Source::SoundCloud);
+    }
+
+    #[test]
+    fn set_type_ep_is_album_and_missing_dates_give_empty_year() {
+        let ep = serde_json::json!({"id": 9, "title": "E", "track_count": 3, "user": {"id": 1, "username": "u"}, "is_album": false, "set_type": "ep"});
+        assert!(matches!(parse_set(&ep), Some(ScSet::Album(a)) if a.year.is_empty()));
+        let pl = serde_json::json!({"id": 8, "title": "P", "track_count": 3, "user": {"id": 1, "username": "u"}, "is_album": false, "set_type": ""});
+        assert!(matches!(parse_set(&pl), Some(ScSet::List(_))));
     }
 
     #[test]
@@ -309,9 +386,9 @@ mod tests {
     fn sc_live_forss() {
         let u = resolve("https://soundcloud.com/forss").unwrap();
         assert!(resolve("https://soundcloud.com/zzz-no-existe-9f3a1c").is_err());
-        let (likes, playlists) = fetch_library(u.id).unwrap();
-        println!("{} ({}): {} likes, {} playlists", u.username, u.id, likes.len(), playlists.len());
-        assert!(likes.len() >= 200 && playlists.len() >= 4);
+        let lib = fetch_library(u.id).unwrap();
+        println!("{} ({}): {} likes, {} playlists, {} albums", u.username, u.id, lib.tracks.len(), lib.playlists.len(), lib.albums.len());
+        assert!(lib.tracks.len() >= 200 && lib.playlists.len() + lib.albums.len() >= 4);
         assert_eq!(fetch_playlist_tracks("2050462").unwrap().len(), 7);
     }
 
