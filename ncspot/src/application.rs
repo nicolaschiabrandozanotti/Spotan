@@ -180,7 +180,8 @@ impl Application {
             Startup::Offline => {
                 // rejected credentials: tell the user once the UI is up
                 offline_notice = start_error.as_ref().map(|e| {
-                    format!("Spotify: no se pudo conectar ({e}); seguís con YouTube/SoundCloud")
+                    let e = e.strip_prefix("Error: ").unwrap_or(e);
+                    format!("Spotify: no se pudo conectar — {e}; seguís con YouTube/SoundCloud")
                 });
                 None
             }
