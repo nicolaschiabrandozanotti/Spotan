@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
@@ -38,6 +38,7 @@ pub struct WebApi {
     worker_channel: Arc<RwLock<Option<mpsc::UnboundedSender<WorkerCommand>>>>,
     /// Time at which the token expires.
     token_expiration: Arc<RwLock<DateTime<Utc>>>,
+    token_generation: Arc<AtomicU64>,
     /// Calls that were still rate limited after waiting.
     rate_limit_failures: Arc<AtomicUsize>,
 }
@@ -58,6 +59,7 @@ impl Default for WebApi {
             user: None,
             worker_channel: Arc::new(RwLock::new(None)),
             token_expiration: Arc::new(RwLock::new(Utc::now())),
+            token_generation: Arc::new(AtomicU64::new(crate::authentication::api_generation())),
             rate_limit_failures: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -94,8 +96,13 @@ impl WebApi {
             let now = Utc::now();
             let delta = *token_expiration - now;
 
-            // token is valid for 5 more minutes, renewal is not necessary yet
-            if delta.num_seconds() > 60 * 5 {
+            // token is valid for 5 more minutes and unchanged on disk, renewal is not necessary yet
+            let loaded = self.token_generation.load(Ordering::SeqCst);
+            if !crate::authentication::needs_reload(
+                loaded,
+                crate::authentication::api_generation(),
+                delta.num_seconds(),
+            ) {
                 return None;
             }
 
@@ -104,7 +111,9 @@ impl WebApi {
 
         let api_token = self.api.token.clone();
         let api_token_expiration = self.token_expiration.clone();
+        let api_generation = self.token_generation.clone();
         Some(ASYNC_RUNTIME.get().unwrap().spawn_blocking(move || {
+            let generation = crate::authentication::api_generation();
             match crate::authentication::get_rspotify_token() {
                 Ok(token) => {
                     let expires_at = token
@@ -112,9 +121,15 @@ impl WebApi {
                         .unwrap_or_else(|| Utc::now() + ChronoDuration::hours(1));
                     *api_token.lock().unwrap() = Some(token);
                     *api_token_expiration.write().unwrap() = expires_at;
+                    api_generation.store(generation, Ordering::SeqCst);
                 }
                 Err(e) => {
                     error!("Failed to update token: {e}");
+                    // Logged out or ID changed: don't keep using the previous token.
+                    if generation != api_generation.load(Ordering::SeqCst) {
+                        *api_token.lock().unwrap() = None;
+                        api_generation.store(generation, Ordering::SeqCst);
+                    }
                 }
             }
         }))

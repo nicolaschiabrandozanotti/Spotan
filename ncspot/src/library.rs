@@ -976,7 +976,7 @@ fn web_api_liked_tracks(spotify: &Spotify) -> Option<Vec<Track>> {
             .current_user_saved_tracks(tracks.len() as u32)
             .ok()?;
         tracks.extend(page.items.iter().map(Track::from));
-        if page.next.is_none() {
+        if page.next.is_none() || page.items.is_empty() {
             return Some(tracks);
         }
     }

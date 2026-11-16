@@ -165,6 +165,10 @@ impl CommandManager {
                     s.queuestate.track_progress = self.spotify.get_current_progress();
                 });
                 self.config.save_state();
+                if crate::restart::requested() {
+                    // Stops playback and the session so the old process doesn't keep playing.
+                    self.spotify.shutdown();
+                }
                 s.quit();
                 Ok(None)
             }
@@ -306,14 +310,9 @@ impl CommandManager {
                 Ok(None)
             }
             Command::Logout => {
-                self.spotify.shutdown();
-
-                let mut credentials_path = crate::config::cache_path("librespot");
-                credentials_path.push("credentials.json");
-                std::fs::remove_file(credentials_path).unwrap();
-
-                s.quit();
-                Ok(None)
+                // Same path as the Settings button: Quit saves state, main relaunches.
+                crate::restart::request();
+                self.handle_callbacks(s, &Command::Quit)
             }
             Command::Execute(cmd) => {
                 log::info!("Executing command: {cmd}");

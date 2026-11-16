@@ -147,6 +147,8 @@ impl Application {
         let mut start_error = None;
         let mut credentials = authentication::get_credentials()?;
         if let Some(c) = credentials.clone() {
+            // Cursive is not drawn yet, so the console is still ours.
+            println!("Conectando a Spotify…");
             if let Err(e) = Spotify::test_credentials(&configuration, c) {
                 error!("Cached credentials rejected: {e}");
                 start_error = Some(format!("Error: {e}"));

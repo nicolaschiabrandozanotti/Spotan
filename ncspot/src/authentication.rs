@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use librespot_core::authentication::Credentials as RespotCredentials;
 use librespot_core::cache::Cache;
@@ -118,9 +119,27 @@ fn token_client_id() -> String {
         .unwrap_or_else(|| NCSPOT_CLIENT_ID.to_string())
 }
 
+/// Bumped whenever the stored Web API token changes outside the normal refresh, so a
+/// running app drops the token it holds in memory.
+static API_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub fn api_generation() -> u64 {
+    API_GENERATION.load(Ordering::SeqCst)
+}
+
+fn bump_generation() {
+    API_GENERATION.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Whether the in-memory token must be reloaded from disk.
+pub fn needs_reload(loaded_generation: u64, current_generation: u64, secs_left: i64) -> bool {
+    loaded_generation != current_generation || secs_left <= 60 * 5
+}
+
 fn clear_token() {
     let _ = fs::remove_file(config::cache_path(TOKEN_FILE));
     let _ = fs::remove_file(config::cache_path(TOKEN_ID_FILE));
+    bump_generation();
 }
 
 /// Set (or clear with `None`) the custom client ID. A different ID invalidates the token.
@@ -135,6 +154,7 @@ pub fn set_api_client_id(id: Option<&str>) -> Result<(), String> {
     }
     if token_client_id() != effective_client_id() {
         clear_token();
+        let _ = fs::remove_file(config::cache_path(EXPIRED_MARK));
     }
     Ok(())
 }
@@ -143,7 +163,7 @@ pub fn api_session() -> ApiSession {
     let has_token = fs::read_to_string(config::cache_path(TOKEN_FILE))
         .ok()
         .and_then(|j| serde_json::from_str::<rspotify::Token>(&j).ok())
-        .is_some();
+        .is_some_and(|t| !t.is_expired() || t.refresh_token.as_deref().is_some_and(|r| !r.is_empty()));
     if has_token {
         ApiSession::Active
     } else if config::cache_path(EXPIRED_MARK).exists() {
@@ -163,14 +183,15 @@ pub fn api_login(on_url: &dyn Fn(&str)) -> Result<(), String> {
         on_url,
         oauth_login::LOGIN_TIMEOUT,
     )?;
-    write_token(&config::cache_path(TOKEN_FILE), &to_rspotify(tokens, None));
-    let _ = fs::write(config::cache_path(TOKEN_ID_FILE), &id);
+    fs::write(config::cache_path(TOKEN_ID_FILE), &id).map_err(|e| e.to_string())?;
+    write_token(&config::cache_path(TOKEN_FILE), &to_rspotify(tokens, None))?;
     let _ = fs::remove_file(config::cache_path(EXPIRED_MARK));
+    bump_generation();
     Ok(())
 }
 
 pub fn api_logout() {
-    clear_token();
+    clear_token(); // also bumps the generation
     let _ = fs::remove_file(config::cache_path(EXPIRED_MARK));
 }
 
@@ -210,32 +231,37 @@ fn get_rspotify_token_with(
     };
     match result {
         Ok(new) => {
-            write_token(&path, &new);
+            write_token(&path, &new)?;
             Ok(new)
         }
-        Err(e) => {
+        Err(e) if e.starts_with("token endpoint returned 4") || old.is_none() => {
             error!("Failed to refresh token: {e}");
             clear_token();
             let _ = fs::write(config::cache_path(EXPIRED_MARK), "");
             Err(format!("Web API session expired: {e}"))
+        }
+        // Network errors and 5xx are transient: keep the token and retry later.
+        Err(e) => {
+            error!("Failed to refresh token (will retry): {e}");
+            Err(format!("Could not refresh Web API token: {e}"))
         }
     }
 }
 
 /// Write `token` to `path`, logging (rather than silently discarding) any failure, and
 /// restricting file permissions since the file holds a long-lived credential.
-fn write_token(path: &Path, token: &rspotify::Token) {
+fn write_token(path: &Path, token: &rspotify::Token) -> Result<(), String> {
     let json = match serde_json::to_string_pretty(token) {
         Ok(json) => json,
         Err(e) => {
             error!("Failed to serialize rspotify token: {e}");
-            return;
+            return Err(e.to_string());
         }
     };
 
     if let Err(e) = fs::write(path, json) {
         error!("Failed to write rspotify token cache: {e}");
-        return;
+        return Err(e.to_string());
     }
 
     #[cfg(unix)]
@@ -245,6 +271,7 @@ fn write_token(path: &Path, token: &rspotify::Token) {
             warn!("Failed to restrict permissions on rspotify token cache: {e}");
         }
     }
+    Ok(())
 }
 
 /// Convert login tokens into the `rspotify::Token` used for Web API calls. When the
@@ -298,7 +325,7 @@ mod test {
             expires_at: Some(chrono::Utc::now() + chrono::Duration::seconds(expires_in_secs)),
             refresh_token: refresh.map(str::to_string),
         };
-        write_token(&config::cache_path("rspotify_token.json"), &token);
+        write_token(&config::cache_path("rspotify_token.json"), &token).unwrap();
     }
 
     fn no_refresh(_: &str, _: &str) -> Result<LoginTokens, String> {
@@ -349,10 +376,45 @@ mod test {
     }
 
     #[test]
+    fn network_error_keeps_token() {
+        let (_g, _d) = sandbox();
+        store_token(-10, Some("r"));
+        let failing = |_: &str, _: &str| Err("error sending request".to_string());
+        assert!(get_rspotify_token_with(&failing).is_err());
+        assert!(config::cache_path("rspotify_token.json").exists());
+        assert_eq!(api_session(), ApiSession::Active);
+        let server = |_: &str, _: &str| Err("token endpoint returned 503: x".to_string());
+        assert!(get_rspotify_token_with(&server).is_err());
+        assert_eq!(api_session(), ApiSession::Active);
+    }
+
+    #[test]
+    fn reload_decision_uses_generation() {
+        assert!(!needs_reload(3, 3, 3000));
+        assert!(needs_reload(3, 4, 3000));
+        assert!(needs_reload(3, 3, 100));
+    }
+
+    #[test]
+    fn generation_bumps_on_logout_and_id_change() {
+        let (_g, _d) = sandbox();
+        let g = api_generation();
+        api_logout();
+        assert!(api_generation() > g);
+    }
+
+    #[test]
+    fn expired_token_without_refresh_is_not_active() {
+        let (_g, _d) = sandbox();
+        store_token(-10, None);
+        assert_eq!(api_session(), ApiSession::None);
+    }
+
+    #[test]
     fn failed_refresh_clears_token_and_marks_expired() {
         let (_g, _d) = sandbox();
         store_token(-10, Some("r"));
-        let failing = |_: &str, _: &str| Err("boom".to_string());
+        let failing = |_: &str, _: &str| Err("token endpoint returned 400: boom".to_string());
         assert!(get_rspotify_token_with(&failing).is_err());
         assert!(!config::cache_path("rspotify_token.json").exists());
         assert_eq!(api_session(), ApiSession::Expired);
