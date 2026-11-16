@@ -36,8 +36,6 @@ pub fn build_results(results: Vec<(Source, Result<Page, String>)>) -> (Vec<Track
 pub struct SourceFilter {
     active: Vec<Source>,
     on: HashSet<Source>,
-    cursor: usize,
-    focused: bool,
     on_change: Option<Box<dyn Fn(&HashSet<Source>) + Send + Sync>>,
 }
 
@@ -45,7 +43,7 @@ impl SourceFilter {
     /// Todos los servicios activos arrancan prendidos.
     pub fn new(active: Vec<Source>) -> Self {
         let on = active.iter().copied().collect();
-        Self { active, on, cursor: 0, focused: false, on_change: None }
+        Self { active, on, on_change: None }
     }
 
     pub fn on_change(&mut self, cb: impl Fn(&HashSet<Source>) + Send + Sync + 'static) {
@@ -55,19 +53,6 @@ impl SourceFilter {
     /// Con menos de dos servicios no hay nada que filtrar.
     pub fn visible(&self) -> bool {
         self.active.len() >= 2
-    }
-
-    pub fn set_focused(&mut self, focused: bool) {
-        self.focused = focused;
-    }
-
-    pub fn is_focused(&self) -> bool {
-        self.focused
-    }
-
-    pub fn move_cursor(&mut self, delta: isize) {
-        let max = self.active.len().saturating_sub(1) as isize;
-        self.cursor = (self.cursor as isize + delta).clamp(0, max) as usize;
     }
 
     pub fn toggle(&mut self, index: usize) {
@@ -80,17 +65,30 @@ impl SourceFilter {
         }
     }
 
-    pub fn toggle_cursor(&mut self) {
-        self.toggle(self.cursor);
+    /// Tecla `1`..`9` -> posición del servicio activo que alterna.
+    pub fn digit_index(active_len: usize, c: char) -> Option<usize> {
+        let i = (c.to_digit(10)? as usize).checked_sub(1)?;
+        (i < active_len).then_some(i)
     }
 
-    /// Posición x y ancho de cada botón: `[Nombre]` separados por un espacio.
+    /// Alterna con una tecla numérica; `true` si la consumió.
+    pub fn toggle_digit(&mut self, c: char) -> bool {
+        match self.visible().then(|| Self::digit_index(self.active.len(), c)).flatten() {
+            Some(i) => {
+                self.toggle(i);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Posición x y ancho de cada botón: `[N Nombre]` separados por un espacio.
     fn spans(&self) -> Vec<(usize, usize)> {
         let mut x = 0;
         self.active
             .iter()
             .map(|s| {
-                let w = s.name().len() + 2;
+                let w = s.name().len() + 4;
                 let span = (x, w);
                 x += w + 1;
                 span
@@ -113,12 +111,8 @@ impl View for SourceFilter {
             return;
         }
         for (i, (source, (x, _))) in self.active.iter().zip(self.spans()).enumerate() {
-            let style = if self.on.contains(source) {
-                if self.focused && i == self.cursor { ColorStyle::highlight() } else { ColorStyle::title_primary() }
-            } else {
-                ColorStyle::secondary()
-            };
-            printer.with_color(style, |p| p.print((x, 0), &format!("[{}]", source.name())));
+            let style = if self.on.contains(source) { ColorStyle::title_primary() } else { ColorStyle::secondary() };
+            printer.with_color(style, |p| p.print((x, 0), &format!("[{} {}]", i + 1, source.name())));
         }
     }
 
@@ -180,7 +174,21 @@ mod tests {
         assert_eq!(one.required_size(Vec2::new(80, 5)), Vec2::zero());
         let mut two = SourceFilter::new(vec![Source::Spotify, Source::YouTube]);
         assert!(two.visible());
-        assert_eq!(two.required_size(Vec2::new(80, 5)), Vec2::new(9 + 1 + 9, 1));
+        assert_eq!(two.required_size(Vec2::new(80, 5)), Vec2::new(11 + 1 + 11, 1));
+    }
+
+    #[test]
+    fn digits_map_to_active_services() {
+        assert_eq!(SourceFilter::digit_index(2, '1'), Some(0));
+        assert_eq!(SourceFilter::digit_index(2, '2'), Some(1));
+        assert_eq!(SourceFilter::digit_index(2, '3'), None);
+        assert_eq!(SourceFilter::digit_index(3, '0'), None);
+        assert_eq!(SourceFilter::digit_index(3, 'x'), None);
+        let mut one = SourceFilter::new(vec![Source::YouTube]);
+        assert!(!one.toggle_digit('1'));
+        let mut two = SourceFilter::new(vec![Source::YouTube, Source::SoundCloud]);
+        assert!(two.toggle_digit('2'));
+        assert!(!two.on.contains(&Source::SoundCloud));
     }
 
     #[test]

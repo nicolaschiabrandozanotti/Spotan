@@ -46,8 +46,11 @@ fn refresh(state: &Mutex<SearchState>, results: &RwLock<Vec<Track>>, pagination:
     let list = merge_and_filter(&st.all, &st.on);
     let len = list.len();
     let more = st.on.iter().any(|s| matches!(st.next.get(s), Some(Some(_))));
-    *results.write().unwrap() = list;
+    // el rango se actualiza con la lista aún bloqueada: un dibujo nunca ve uno sin el otro
+    let mut shown = results.write().unwrap();
+    *shown = list;
     pagination.update_range(len, more.then_some(len + 1));
+    drop(shown);
 }
 
 /// Agrega la página de `source` si la búsqueda sigue vigente; los fallos solo avisan.
@@ -122,6 +125,11 @@ impl View for TracksTab {
     }
 
     fn on_event(&mut self, event: Event) -> EventResult {
+        if let Event::Char(c) = event
+            && self.bar.toggle_digit(c)
+        {
+            return EventResult::consumed();
+        }
         let h = self.bar_height();
         let on_bar = event
             .mouse_position()
@@ -140,23 +148,6 @@ impl ViewExt for TracksTab {
     }
 
     fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
-        use crate::command::{MoveMode, TargetMode};
-        if self.bar.visible() {
-            if self.bar.is_focused() {
-                match cmd {
-                    Command::Move(MoveMode::Left, _) => self.bar.move_cursor(-1),
-                    Command::Move(MoveMode::Right, _) => self.bar.move_cursor(1),
-                    Command::Move(MoveMode::Down, _) => self.bar.set_focused(false),
-                    Command::Open(TargetMode::Selected) | Command::Play => self.bar.toggle_cursor(),
-                    _ => return self.list.on_command(s, cmd),
-                }
-                return Ok(CommandResult::Consumed(None));
-            }
-            if matches!(cmd, Command::Move(MoveMode::Up, _)) && self.list.get_selected_index() == 0 {
-                self.bar.set_focused(true);
-                return Ok(CommandResult::Consumed(None));
-            }
-        }
         self.list.on_command(s, cmd)
     }
 }
