@@ -32,6 +32,8 @@ pub enum QueueEvent {
     /// Request the player to 'preload' a track, basically making sure that
     /// transitions between tracks can be uninterrupted.
     PreloadTrackRequest,
+    /// The external engine could not play the track with this uri: stop retrying it.
+    TrackFailed(String),
 }
 
 /// The queue determines the playback order of [Playable] items, and is also used to control
@@ -374,53 +376,47 @@ impl Queue {
         let q = self.queue.read().unwrap();
         let current = *self.current_track.read().unwrap();
         let repeat = self.cfg.state().repeat;
+        let can = |i: &usize| self.spotify.can_play(&q[*i]);
 
         if repeat == RepeatSetting::RepeatTrack && !manual {
-            if let Some(index) = current
-                && q[index].is_playable()
-            {
-                self.play(index, false, false);
+            match current.filter(can) {
+                Some(index) => self.play(index, false, false),
+                None => self.spotify.stop(),
             }
-        } else if let Some(index) = self.next_index() {
+            return;
+        }
+        let after = self.current_order_pos().map_or(0..0, |p| p + 1..q.len());
+        if let Some(index) = after.map(|p| self.queue_index_at(p)).find(can) {
             self.play(index, false, false);
             if repeat == RepeatSetting::RepeatTrack && manual {
                 self.set_repeat(RepeatSetting::RepeatPlaylist);
             }
-        } else if repeat == RepeatSetting::RepeatPlaylist
-            && !q.is_empty()
-            && q.iter().any(|track| track.is_playable())
+        } else if let Some(index) = (repeat == RepeatSetting::RepeatPlaylist)
+            .then(|| (0..q.len()).map(|p| self.queue_index_at(p)).find(can))
+            .flatten()
         {
-            let random_order = self.random_order.read().unwrap();
-            self.play(
-                random_order.as_ref().map(|o| o[0]).unwrap_or(0),
-                false,
-                false,
-            );
+            self.play(index, false, false);
         } else {
             self.spotify.stop();
         }
     }
 
-    /// Play the previous item in the queue.
+    /// Play the previous item in the queue, skipping entries that can't be played.
     pub fn previous(&self) {
         let q = self.queue.read().unwrap();
         let current = *self.current_track.read().unwrap();
         let repeat = self.cfg.state().repeat;
+        let can = |i: &usize| self.spotify.can_play(&q[*i]);
 
-        if let Some(index) = self.previous_index() {
+        let before = self.current_order_pos().map_or(0..0, |p| 0..p);
+        if let Some(index) = before.rev().map(|p| self.queue_index_at(p)).find(can) {
             self.play(index, false, false);
-        } else if repeat == RepeatSetting::RepeatPlaylist && !q.is_empty() {
-            if self.get_shuffle() {
-                let random_order = self.random_order.read().unwrap();
-                self.play(
-                    random_order.as_ref().map(|o| o[q.len() - 1]).unwrap_or(0),
-                    false,
-                    false,
-                );
-            } else {
-                self.play(q.len() - 1, false, false);
-            }
-        } else if let Some(index) = current {
+        } else if let Some(index) = (repeat == RepeatSetting::RepeatPlaylist)
+            .then(|| (0..q.len()).rev().map(|p| self.queue_index_at(p)).find(can))
+            .flatten()
+        {
+            self.play(index, false, false);
+        } else if let Some(index) = current.filter(can) {
             self.play(index, false, false);
         }
     }
@@ -478,6 +474,15 @@ impl Queue {
     /// Handle events that are specific to the queue.
     pub fn handle_event(&self, event: QueueEvent) {
         match event {
+            QueueEvent::TrackFailed(uri) => {
+                for item in self.queue.write().unwrap().iter_mut() {
+                    if let Playable::Track(t) = item
+                        && t.uri == uri
+                    {
+                        t.is_playable = Some(false);
+                    }
+                }
+            }
             QueueEvent::PreloadTrackRequest => {
                 if let Some(next_index) = self.next_index() {
                     let track = self.queue.read().unwrap()[next_index].clone();
@@ -905,5 +910,67 @@ pub(crate) mod tests {
         q.clear();
         // clear() clears the order contents but leaves it as Some([]).
         assert_eq!(q.get_random_order(), Some(vec![]));
+    }
+
+    // --- offline / unplayable entries ---
+
+    fn offline_queue(tracks: Vec<Playable>, current: Option<usize>, online: bool) -> (Queue, EventManager, impl Sized) {
+        let (sink, keep) = crossbeam_channel::unbounded();
+        let ev = EventManager::new(sink);
+        let cfg = Config::new_for_test();
+        let spotify = if online {
+            Spotify::new_online_for_test(cfg.clone(), ev.clone())
+        } else {
+            Spotify::new_for_test(cfg.clone(), ev.clone())
+        };
+        let library = Library::new_for_test(ev.clone(), spotify.clone(), cfg.clone());
+        let q = Queue {
+            queue: Arc::new(RwLock::new(tracks)),
+            random_order: RwLock::new(None),
+            current_track: RwLock::new(current),
+            spotify,
+            cfg,
+            library,
+        };
+        (q, ev, keep)
+    }
+
+    fn finished_count(ev: &EventManager) -> usize {
+        ev.msg_iter()
+            .filter(|e| matches!(e, crate::events::Event::Player(PlayerEvent::FinishedTrack)))
+            .count()
+    }
+
+    #[test]
+    fn next_with_repeat_and_nothing_playable_loads_nothing() {
+        for repeat in [RepeatSetting::RepeatTrack, RepeatSetting::RepeatPlaylist] {
+            let (q, ev, _k) = offline_queue(vec![make_track(0), make_track(1)], Some(0), false);
+            q.set_repeat(repeat);
+            q.next(false);
+            assert_eq!(finished_count(&ev), 0, "{repeat:?}");
+            assert_eq!(q.get_current_index(), Some(0));
+        }
+    }
+
+    #[test]
+    fn next_and_previous_skip_unplayable_entries() {
+        let mut bad = make_track(1);
+        if let Playable::Track(t) = &mut bad {
+            t.is_playable = Some(false);
+        }
+        let (q, ev, _k) = offline_queue(vec![make_track(0), bad, make_track(2)], Some(0), true);
+        q.next(false);
+        assert_eq!(q.get_current_index(), Some(2));
+        q.previous();
+        assert_eq!(q.get_current_index(), Some(0));
+        assert_eq!(finished_count(&ev), 0);
+    }
+
+    #[test]
+    fn failed_track_event_marks_entry_unplayable() {
+        let (q, _ev, _k) = offline_queue(vec![make_track(0), make_track(1)], Some(0), true);
+        q.handle_event(QueueEvent::TrackFailed("spotify:track:id_1".into()));
+        assert!(q.queue.read().unwrap()[0].is_playable());
+        assert!(!q.queue.read().unwrap()[1].is_playable());
     }
 }

@@ -132,6 +132,28 @@ impl Spotify {
         Self::new_offline(events, cfg)
     }
 
+    /// Create a Spotify instance that looks connected (a worker channel nobody reads), for tests.
+    #[cfg(test)]
+    pub fn new_online_for_test(cfg: Arc<config::Config>, events: EventManager) -> Self {
+        let spotify = Self::new_offline(events, cfg);
+        *spotify.channel.write().unwrap() = Some(mpsc::unbounded_channel().0);
+        spotify
+    }
+
+    /// Whether `p` can be played right now: playable, and its engine is available (Spotify
+    /// needs a session, YouTube/SoundCloud need the service turned on).
+    pub fn can_play(&self, p: &Playable) -> bool {
+        self.can_play_with(p, &crate::external::enabled())
+    }
+
+    fn can_play_with(&self, p: &Playable, enabled: &[Source]) -> bool {
+        p.is_playable()
+            && match p.source() {
+                Source::Spotify => self.is_online(),
+                other => enabled.contains(&other),
+            }
+    }
+
     /// Whether a worker (a Spotify session) exists.
     pub fn is_online(&self) -> bool {
         self.channel.read().unwrap().is_some()
@@ -518,7 +540,7 @@ impl Spotify {
     /// Send a command to the external engine, only if it already exists.
     fn send_external(&self, cmd: ExtCmd) {
         if let Some(player) = self.external.lock().unwrap().as_ref() {
-            player.send(cmd);
+            let _ = player.send(cmd);
         }
     }
 
@@ -543,8 +565,13 @@ impl Spotify {
                 }
             }
         }
-        external.as_ref().unwrap().send(cmd);
-        true
+        if external.as_ref().unwrap().send(cmd) {
+            return true;
+        }
+        // the engine thread died (e.g. no audio device): the next load builds a new one
+        *external = None;
+        self.events.notify("El reproductor externo se detuvo".to_string());
+        false
     }
 
     /// Route a playback command to the engine that owns the current track.
@@ -730,6 +757,23 @@ mod tests {
         spotify.load(&Playable::Track(track), true, 0);
         let got: Vec<_> = events.msg_iter().collect();
         assert!(matches!(got.as_slice(), [Event::Player(PlayerEvent::FinishedTrack)]));
+    }
+
+    #[test]
+    fn can_play_needs_online_spotify_or_enabled_service() {
+        let (spotify, _events, _keep) = offline();
+        let sp = Playable::Track(Track::external(
+            Source::YouTube, "a".into(), "t".into(), "a".into(), 1, None, "u".into(),
+        ));
+        let mut t = match sp.clone() { Playable::Track(t) => t, _ => unreachable!() };
+        t.source = Source::Spotify;
+        let spotify_track = Playable::Track(t);
+        // sin sesión no se puede reproducir un tema de Spotify
+        assert!(!spotify.can_play_with(&spotify_track, &[Source::YouTube]));
+        // servicio apagado: el tema de YouTube no se reproduce
+        assert!(!spotify.can_play_with(&sp, &[]));
+        assert!(!spotify.can_play_with(&sp, &[Source::SoundCloud]));
+        assert!(spotify.can_play_with(&sp, &[Source::YouTube]));
     }
 
     #[test]

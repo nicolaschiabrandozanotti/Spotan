@@ -174,9 +174,16 @@ impl Application {
                 credentials = None;
             }
         }
+        let mut offline_notice = None;
         let credentials = match startup_mode(credentials.is_some(), &crate::external::enabled()) {
             Startup::Online => credentials,
-            Startup::Offline => None,
+            Startup::Offline => {
+                // rejected credentials: tell the user once the UI is up
+                offline_notice = start_error.as_ref().map(|e| {
+                    format!("Spotify: no se pudo conectar ({e}); seguís con YouTube/SoundCloud")
+                });
+                None
+            }
             Startup::StartScreen => start_screen(&configuration, &theme, start_error)?,
         };
 
@@ -198,6 +205,10 @@ impl Application {
             }
             None => spotify::Spotify::new_offline(event_manager.clone(), configuration.clone()),
         };
+
+        if let Some(notice) = offline_notice {
+            event_manager.notify(notice);
+        }
 
         let library = Arc::new(Library::new(
             event_manager.clone(),
@@ -226,7 +237,8 @@ impl Application {
         let playback_state = configuration.state().playback_state.clone();
         let queue_state = configuration.state().queuestate.clone();
 
-        if let Some(playable) = queue.get_current() {
+        // A track that can't play now (no Spotify session, service off) stays unloaded
+        if let Some(playable) = queue.get_current().filter(|p| spotify.can_play(p)) {
             spotify.load(
                 &playable,
                 playback_state == PlaybackState::Playing,
