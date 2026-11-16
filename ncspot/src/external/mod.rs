@@ -11,6 +11,7 @@ use crate::config;
 use crate::model::track::{Source, Track};
 
 pub mod hls;
+pub mod player;
 pub mod soundcloud;
 pub mod stream;
 pub mod youtube;

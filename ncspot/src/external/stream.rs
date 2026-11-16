@@ -66,7 +66,7 @@ impl Read for RangeSource {
         if self.pos < self.buf_start || off >= self.buf.len() as u64 {
             self.load()?;
             if self.buf.is_empty() {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "rango vacío"));
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "rango vacío"));
             }
         }
         let off = (self.pos - self.buf_start) as usize;
@@ -225,7 +225,7 @@ pub fn to_stereo(samples: &[f32], channels: usize) -> Vec<f64> {
     }
 }
 
-// shortcut: remuestreo lineal, se nota poco en voz/música a 48 kHz; usar rubato si alguien lo escucha mal
+// shortcut: remuestreo lineal (fase por paquete), se nota poco en voz/música a 48 kHz; usar rubato si alguien lo escucha mal
 pub fn resample_to_44100(stereo: &[f64], from_hz: u32) -> Vec<f64> {
     if from_hz == 44100 || from_hz == 0 || stereo.len() < 2 {
         return stereo.to_vec();

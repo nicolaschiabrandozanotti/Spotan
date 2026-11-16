@@ -1,6 +1,7 @@
 use crossbeam_channel::{Receiver, Sender, TryIter, unbounded};
 use cursive::{CbSink, Cursive};
 
+use crate::ext_traits::CursiveExt;
 use crate::queue::QueueEvent;
 use crate::spotify::PlayerEvent;
 
@@ -49,6 +50,13 @@ impl EventManager {
     pub fn send(&self, event: Event) {
         self.tx.send(event).unwrap();
         self.trigger();
+    }
+
+    /// Show `msg` as an error in the status bar of the main layout.
+    pub fn notify(&self, msg: String) {
+        let _ = self
+            .cursive_sink
+            .send(Box::new(move |s| s.on_layout(|_, mut l| l.set_result(Err(msg)))));
     }
 
     /// Send a no-op to the Cursive event loop to trigger immediate processing of events.
