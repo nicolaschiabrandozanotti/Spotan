@@ -65,7 +65,31 @@ irm https://github.com/nicolaschiabrandozanotti/Spotan/releases/latest/download/
 
 Para volver a abrirlo: `%LOCALAPPDATA%\Spoti\spoti-windows-x86_64\spoti.bat`. También podés bajar el `.zip` desde Releases, descomprimirlo y hacer doble clic en `spoti.bat`; en ese caso SmartScreen puede avisar porque el ejecutable no está firmado (*Más información → Ejecutar de todas formas*). La primera vez copia el tema a `%APPDATA%\ncspot\config.toml` sin pisar una config existente y abre Windows Terminal si lo tenés.
 
-La primera vez, Spoti te pide iniciar sesión en Spotify desde el navegador.
+La primera vez, Spoti abre una pantalla de inicio con el botón **Iniciar sesión con Spotify**: se abre el navegador, aceptás y volvés a Spoti, que carga tu música y tu biblioteca. La sesión queda guardada.
+
+## Ajustes y app propia de Spotify (opcional)
+
+Arriba, junto a Biblioteca · Buscar · Cola, está el botón **Ajustes** (o `F4`). Ahí podés cerrar sesión (Spoti se reinicia solo) y, si querés, conectar **tu propia app de desarrollador de Spotify**.
+
+**¿Para qué sirve?** La biblioteca (me gusta y playlists) carga sin nada extra. Pero **buscar** y algunas páginas usan la API oficial de Spotify, que con la app compartida responde casi siempre "demasiados pedidos" (error 429). Con tu propia app, la búsqueda vuelve a andar.
+
+**Paso a paso** (una sola vez, con tu cuenta Premium):
+
+1. Entrá a [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) e iniciá sesión con tu cuenta de Spotify.
+2. Tocá **Create app** y completá:
+   - **App name**: `Spoti` (o lo que quieras).
+   - **App description**: `Cliente de terminal personal`.
+   - **Website**: vacío.
+   - **Redirect URIs**: agregá `http://127.0.0.1/ncspot_login` (tocá **Add**). El aviso *"This redirect URI is not secure"* es normal para direcciones `127.0.0.1`; podés guardarla igual.
+   - **Which API/SDKs**: marcá solo **Web API**.
+   - Aceptá los términos y tocá **Save**.
+3. En tu app, entrá a **Settings** y copiá el **Client ID** (32 caracteres). **No hace falta el Client Secret**: Spoti no lo pide ni lo guarda.
+4. En Spoti: **Ajustes** → pegá el Client ID → **Iniciar sesión en la API** → aceptá en el navegador. El estado pasa a *activa (app propia)*.
+
+Notas:
+- Spotify limita las apps de desarrollador a **5 usuarios**. Si otra persona quiere usar tu app, agregala en el panel de la app → **User Management** con su nombre y el email de su cuenta de Spotify. Si no, que cree la suya (son 2 minutos).
+- Con app propia, la búsqueda trae **10 resultados por página** (límite de Spotify para estas apps); al bajar en la lista se cargan más solos.
+- **Volver a la compartida** borra tu Client ID de Spoti y vuelve a la app de siempre.
 
 ## Atajos
 
