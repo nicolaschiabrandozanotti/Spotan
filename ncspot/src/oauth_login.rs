@@ -12,8 +12,6 @@ use url::Url;
 pub const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 const TOKEN_URL: &str = "https://accounts.spotify.com/api/token";
 
-// usado en la tarea 2
-#[allow(dead_code)]
 pub struct LoginTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -102,8 +100,6 @@ fn token_request(form: &[(&str, &str)]) -> Result<LoginTokens, String> {
     })
 }
 
-// usado en la tarea 2
-#[allow(dead_code)]
 pub fn refresh(client_id: &str, refresh_token: &str) -> Result<LoginTokens, String> {
     token_request(&[
         ("grant_type", "refresh_token"),

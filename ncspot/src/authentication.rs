@@ -1,11 +1,11 @@
 use std::fs;
-use std::net::TcpListener;
 use std::path::Path;
 
 use librespot_core::authentication::Credentials as RespotCredentials;
 use librespot_core::cache::Cache;
-use librespot_oauth::OAuthClientBuilder;
 use log::{error, info, warn};
+
+use crate::oauth_login::{self, LoginTokens};
 
 use crate::config::{self, Config};
 use crate::spotify::Spotify;
@@ -60,25 +60,6 @@ static NCSPOT_OAUTH_SCOPES: &[&str] = &[
     "user-read-recently-played",
 ];
 
-pub fn find_free_port() -> Result<u16, String> {
-    let socket = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
-    socket
-        .local_addr()
-        .map(|addr| addr.port())
-        .map_err(|e| e.to_string())
-}
-
-enum ClientUriSuffix {
-    Ncspot,
-}
-
-fn get_client_redirect_uri(suffix: ClientUriSuffix) -> String {
-    let auth_port = find_free_port().expect("Could not find free port");
-    match suffix {
-        ClientUriSuffix::Ncspot => format!("http://127.0.0.1:{auth_port}/ncspot_login"),
-    }
-}
-
 /// Get credentials for use with librespot. This first tries to get cached credentials. If no cached
 /// credentials are available it will initiate the OAuth2 login process.
 pub fn get_credentials(configuration: &Config) -> Result<RespotCredentials, String> {
@@ -127,66 +108,143 @@ pub fn create_credentials() -> Result<RespotCredentials, String> {
     .map(|t| RespotCredentials::with_access_token(t.access_token))
 }
 
-pub fn get_rspotify_token() -> Result<rspotify::Token, String> {
-    let path = config::cache_path("rspotify_token.json");
-    let token = if let Ok(token_json) = fs::read_to_string(&path) {
-        serde_json::from_str::<rspotify::Token>(&token_json).ok()
-    } else {
-        None
-    };
+const TOKEN_FILE: &str = "rspotify_token.json";
+const TOKEN_ID_FILE: &str = "rspotify_client_id";
+const EXPIRED_MARK: &str = "rspotify_expired";
 
-    if let Some(t) = token {
-        if !t.is_expired() {
-            return Ok(t);
-        }
-
-        // Token is expired, try to refresh if we have a refresh token. Spotify's refresh
-        // responses may omit the refresh token, in which case it must be reused, so an
-        // empty/missing value here means we don't actually have a usable refresh token.
-        let refresh_token = t.refresh_token.as_deref().filter(|s| !s.is_empty());
-        if let Some(refresh_token) = refresh_token {
-            info!("Access token expired, attempting to refresh..");
-            let client_builder = OAuthClientBuilder::new(
-                NCSPOT_CLIENT_ID,
-                &get_client_redirect_uri(ClientUriSuffix::Ncspot),
-                NCSPOT_OAUTH_SCOPES.to_vec(),
-            );
-            if let Ok(oauth_client) = client_builder.build() {
-                match oauth_client.refresh_token(refresh_token) {
-                    Ok(new_token) => {
-                        let mapped = map_token(new_token, Some(refresh_token));
-                        write_token(&path, &mapped);
-                        return Ok(mapped);
-                    }
-                    Err(e) => {
-                        error!("Failed to refresh token: {e}");
-                    }
-                }
-            }
-        }
-    }
-
-    let t = create_rspotify_token()?;
-    write_token(&path, &t);
-    Ok(t)
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ApiSession {
+    None,
+    Active,
+    Expired,
 }
 
-pub fn create_rspotify_token() -> Result<rspotify::Token, String> {
-    println!(
-        "To fully enable Web API features, you need to perform a second OAuth2 authorization\n"
-    );
+/// Custom Web API client ID chosen by the user; `None` means the shared one.
+#[allow(dead_code)] // usado en la tarea del menú de ajustes
+pub fn api_client_id() -> Option<String> {
+    let id = fs::read_to_string(config::config_path("api_client_id")).ok()?;
+    Some(id.trim().to_string()).filter(|s| !s.is_empty())
+}
 
-    let client_builder = OAuthClientBuilder::new(
-        NCSPOT_CLIENT_ID,
-        &get_client_redirect_uri(ClientUriSuffix::Ncspot),
-        NCSPOT_OAUTH_SCOPES.to_vec(),
-    );
-    let oauth_client = client_builder.build().map_err(|e| e.to_string())?;
+pub fn effective_client_id() -> String {
+    api_client_id().unwrap_or_else(|| NCSPOT_CLIENT_ID.to_string())
+}
 
-    oauth_client
-        .get_access_token()
-        .map(|token| map_token(token, None))
-        .map_err(|e| e.to_string())
+/// Client ID the stored token was issued for (absent file = shared, legacy tokens).
+fn token_client_id() -> String {
+    fs::read_to_string(config::cache_path(TOKEN_ID_FILE))
+        .map(|s| s.trim().to_string())
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| NCSPOT_CLIENT_ID.to_string())
+}
+
+fn clear_token() {
+    let _ = fs::remove_file(config::cache_path(TOKEN_FILE));
+    let _ = fs::remove_file(config::cache_path(TOKEN_ID_FILE));
+}
+
+/// Set (or clear with `None`) the custom client ID. A different ID invalidates the token.
+#[allow(dead_code)] // usado en la tarea del menú de ajustes
+pub fn set_api_client_id(id: Option<&str>) -> Result<(), String> {
+    let path = config::config_path("api_client_id");
+    match id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => fs::write(&path, id).map_err(|e| e.to_string())?,
+        None => match fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
+            _ => {}
+        },
+    }
+    if token_client_id() != effective_client_id() {
+        clear_token();
+    }
+    Ok(())
+}
+
+#[allow(dead_code)] // usado en la tarea del menú de ajustes
+pub fn api_session() -> ApiSession {
+    let has_token = fs::read_to_string(config::cache_path(TOKEN_FILE))
+        .ok()
+        .and_then(|j| serde_json::from_str::<rspotify::Token>(&j).ok())
+        .is_some();
+    if has_token {
+        ApiSession::Active
+    } else if config::cache_path(EXPIRED_MARK).exists() {
+        ApiSession::Expired
+    } else {
+        ApiSession::None
+    }
+}
+
+/// The only interactive path to the Web API token. Blocking.
+#[allow(dead_code)] // usado en la tarea del menú de ajustes
+pub fn api_login(on_url: &dyn Fn(&str)) -> Result<(), String> {
+    let id = effective_client_id();
+    let tokens = oauth_login::oauth_login(
+        &id,
+        "/ncspot_login",
+        NCSPOT_OAUTH_SCOPES,
+        on_url,
+        oauth_login::LOGIN_TIMEOUT,
+    )?;
+    write_token(&config::cache_path(TOKEN_FILE), &to_rspotify(tokens, None));
+    let _ = fs::write(config::cache_path(TOKEN_ID_FILE), &id);
+    let _ = fs::remove_file(config::cache_path(EXPIRED_MARK));
+    Ok(())
+}
+
+#[allow(dead_code)] // usado en la tarea del menú de ajustes
+pub fn api_logout() {
+    clear_token();
+    let _ = fs::remove_file(config::cache_path(EXPIRED_MARK));
+}
+
+/// Stored Web API token, refreshed if needed. Never starts a login.
+pub fn get_rspotify_token() -> Result<rspotify::Token, String> {
+    get_rspotify_token_with(&oauth_login::refresh)
+}
+
+fn get_rspotify_token_with(
+    refresh: &dyn Fn(&str, &str) -> Result<LoginTokens, String>,
+) -> Result<rspotify::Token, String> {
+    let path = config::cache_path(TOKEN_FILE);
+    let token = fs::read_to_string(&path)
+        .ok()
+        .and_then(|j| serde_json::from_str::<rspotify::Token>(&j).ok())
+        .ok_or_else(|| "No Web API session; log in from settings".to_string())?;
+
+    if !token.is_expired() {
+        return Ok(token);
+    }
+
+    let id = token_client_id();
+    if id != effective_client_id() {
+        clear_token();
+        return Err("Web API client ID changed; log in again".to_string());
+    }
+
+    // Spotify's refresh responses may omit the refresh token, in which case it must be
+    // reused, so an empty/missing value here means we have nothing to refresh with.
+    let old = token.refresh_token.as_deref().filter(|s| !s.is_empty());
+    let result = match old {
+        Some(old) => {
+            info!("Access token expired, attempting to refresh..");
+            refresh(&id, old).map(|t| to_rspotify(t, Some(old)))
+        }
+        None => Err("no refresh token".to_string()),
+    };
+    match result {
+        Ok(new) => {
+            write_token(&path, &new);
+            Ok(new)
+        }
+        Err(e) => {
+            error!("Failed to refresh token: {e}");
+            clear_token();
+            let _ = fs::write(config::cache_path(EXPIRED_MARK), "");
+            Err(format!("Web API session expired: {e}"))
+        }
+    }
 }
 
 /// Write `token` to `path`, logging (rather than silently discarding) any failure, and
@@ -214,69 +272,144 @@ fn write_token(path: &Path, token: &rspotify::Token) {
     }
 }
 
-/// Map an OAuth token obtained from librespot into the `rspotify::Token` type used for Web
-/// API calls.
-///
-/// Spotify's refresh-token responses may omit `refresh_token` entirely, in which case the
-/// previously issued refresh token must be reused (it has not been rotated or invalidated).
-/// `librespot_oauth` maps that omission to an empty string, so `fallback_refresh_token` is
-/// substituted whenever the token returned by librespot is empty, to avoid ever persisting an
-/// unusable refresh token.
-fn map_token(
-    token: librespot_oauth::OAuthToken,
-    fallback_refresh_token: Option<&str>,
-) -> rspotify::Token {
-    let duration = if token.expires_at > std::time::Instant::now() {
-        token.expires_at.duration_since(std::time::Instant::now())
-    } else {
-        std::time::Duration::from_secs(0)
-    };
-    let expires_in = chrono::Duration::from_std(duration).unwrap_or(chrono::Duration::seconds(0));
-
-    let refresh_token = if token.refresh_token.is_empty() {
-        fallback_refresh_token.map(str::to_string)
-    } else {
-        Some(token.refresh_token)
-    };
-
+/// Convert login tokens into the `rspotify::Token` used for Web API calls. When the
+/// response omits the refresh token, `fallback_refresh_token` (still valid) is kept.
+fn to_rspotify(tokens: LoginTokens, fallback_refresh_token: Option<&str>) -> rspotify::Token {
+    let expires_in =
+        chrono::Duration::from_std(tokens.expires_in).unwrap_or(chrono::Duration::seconds(0));
     rspotify::Token {
-        access_token: token.access_token,
+        access_token: tokens.access_token,
         expires_in,
-        scopes: std::collections::HashSet::new(),
+        scopes: tokens.scopes.into_iter().collect(),
         expires_at: Some(chrono::Utc::now() + expires_in),
-        refresh_token,
+        refresh_token: tokens
+            .refresh_token
+            .filter(|s| !s.is_empty())
+            .or_else(|| fallback_refresh_token.map(str::to_string)),
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::oauth_login::LoginTokens;
+    use std::sync::Mutex;
+    use std::time::Duration;
 
-    fn oauth_token(refresh_token: &str) -> librespot_oauth::OAuthToken {
-        librespot_oauth::OAuthToken {
+    // The configuration base path is global, so tests touching it run one at a time.
+    static LOCK: Mutex<()> = Mutex::new(());
+
+    fn sandbox() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
+        let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_configuration_base_path(Some(dir.path().to_path_buf()));
+        (guard, dir)
+    }
+
+    fn tokens(refresh_token: &str) -> LoginTokens {
+        LoginTokens {
             access_token: "access".to_string(),
-            refresh_token: refresh_token.to_string(),
-            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(3600),
-            token_type: "Bearer".to_string(),
+            refresh_token: Some(refresh_token.to_string()).filter(|s| !s.is_empty()),
+            expires_in: Duration::from_secs(3600),
             scopes: Vec::new(),
         }
     }
 
-    #[test]
-    fn map_token_keeps_new_refresh_token_when_present() {
-        let mapped = map_token(oauth_token("new-refresh-token"), Some("old-refresh-token"));
-        assert_eq!(mapped.refresh_token, Some("new-refresh-token".to_string()));
+    fn store_token(expires_in_secs: i64, refresh: Option<&str>) {
+        let token = rspotify::Token {
+            access_token: "stored".to_string(),
+            expires_in: chrono::Duration::seconds(expires_in_secs),
+            scopes: Default::default(),
+            expires_at: Some(chrono::Utc::now() + chrono::Duration::seconds(expires_in_secs)),
+            refresh_token: refresh.map(str::to_string),
+        };
+        write_token(&config::cache_path("rspotify_token.json"), &token);
+    }
+
+    fn no_refresh(_: &str, _: &str) -> Result<LoginTokens, String> {
+        panic!("refresh must not be called");
     }
 
     #[test]
-    fn map_token_falls_back_to_previous_refresh_token_when_omitted() {
-        let mapped = map_token(oauth_token(""), Some("old-refresh-token"));
-        assert_eq!(mapped.refresh_token, Some("old-refresh-token".to_string()));
+    fn client_id_is_trimmed_and_empty_means_shared() {
+        let (_g, _d) = sandbox();
+        assert_eq!(effective_client_id(), NCSPOT_CLIENT_ID);
+        fs::write(config::config_path("api_client_id"), "  abc123\n").unwrap();
+        assert_eq!(api_client_id(), Some("abc123".to_string()));
+        assert_eq!(effective_client_id(), "abc123");
+        fs::write(config::config_path("api_client_id"), "   \n").unwrap();
+        assert_eq!(api_client_id(), None);
     }
 
     #[test]
-    fn map_token_yields_no_refresh_token_when_omitted_without_fallback() {
-        let mapped = map_token(oauth_token(""), None);
-        assert_eq!(mapped.refresh_token, None);
+    fn legacy_token_without_id_file_counts_as_shared() {
+        let (_g, _d) = sandbox();
+        store_token(3600, Some("r"));
+        assert!(get_rspotify_token_with(&no_refresh).is_ok());
+        assert_eq!(api_session(), ApiSession::Active);
+    }
+
+    #[test]
+    fn changing_client_id_discards_token() {
+        let (_g, _d) = sandbox();
+        store_token(3600, Some("r"));
+        fs::write(config::cache_path("rspotify_client_id"), "A").unwrap();
+        set_api_client_id(Some("B")).unwrap();
+        assert_eq!(api_session(), ApiSession::None);
+        assert!(!config::cache_path("rspotify_client_id").exists());
+    }
+
+    #[test]
+    fn failed_refresh_clears_token_and_marks_expired() {
+        let (_g, _d) = sandbox();
+        store_token(-10, Some("r"));
+        let failing = |_: &str, _: &str| Err("boom".to_string());
+        assert!(get_rspotify_token_with(&failing).is_err());
+        assert!(!config::cache_path("rspotify_token.json").exists());
+        assert_eq!(api_session(), ApiSession::Expired);
+        api_logout();
+        assert_eq!(api_session(), ApiSession::None);
+    }
+
+    #[test]
+    fn successful_refresh_keeps_old_refresh_token_and_rewrites() {
+        let (_g, _d) = sandbox();
+        store_token(-10, Some("old"));
+        let ok = |_: &str, rt: &str| {
+            assert_eq!(rt, "old");
+            Ok(tokens(""))
+        };
+        let t = get_rspotify_token_with(&ok).unwrap();
+        assert_eq!(t.refresh_token.as_deref(), Some("old"));
+        assert_eq!(api_session(), ApiSession::Active);
+    }
+
+    #[test]
+    fn expired_token_with_other_client_id_is_discarded() {
+        let (_g, _d) = sandbox();
+        store_token(-10, Some("r"));
+        fs::write(config::cache_path("rspotify_client_id"), "A").unwrap();
+        assert!(get_rspotify_token_with(&no_refresh).is_err());
+        assert_eq!(api_session(), ApiSession::None);
+    }
+
+    #[test]
+    fn no_token_never_logs_in() {
+        let (_g, _d) = sandbox();
+        assert!(get_rspotify_token_with(&no_refresh).is_err());
+        assert_eq!(api_session(), ApiSession::None);
+    }
+
+    #[test]
+    fn to_rspotify_keeps_new_refresh_token_when_present() {
+        let mapped = to_rspotify(tokens("new"), Some("old"));
+        assert_eq!(mapped.refresh_token, Some("new".to_string()));
+    }
+
+    #[test]
+    fn to_rspotify_falls_back_to_previous_refresh_token_when_omitted() {
+        let mapped = to_rspotify(tokens(""), Some("old"));
+        assert_eq!(mapped.refresh_token, Some("old".to_string()));
+        assert_eq!(to_rspotify(tokens(""), None).refresh_token, None);
     }
 }
