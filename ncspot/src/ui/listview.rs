@@ -344,7 +344,11 @@ impl<I: ListItem + Clone> View for ListView<I> {
                 let style = ColorStyle::secondary();
 
                 let max = self.pagination.max_content().unwrap();
-                let buf = format!("{} more items, scroll to load", max.saturating_sub(i));
+                // the mixed search reports `len + 1` as a "there is more" sentinel, not a real count
+                let buf = match max.saturating_sub(i) {
+                    0 | 1 => "More items, scroll to load".to_string(),
+                    n => format!("{n} more items, scroll to load"),
+                };
                 printer.with_color(style, |printer| {
                     printer.print((0, 0), &buf);
                 });
