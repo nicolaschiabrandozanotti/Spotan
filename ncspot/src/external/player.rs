@@ -235,6 +235,18 @@ impl Worker {
         self.finish();
     }
 
+    /// The audio device failed: say so and stop. The track is fine, so it isn't marked, and
+    /// no FinishedTrack so the queue doesn't advance (or spin under repeat) into the same failure.
+    fn sink_fail(&mut self, source: Source) {
+        if !self.stale() {
+            self.events.notify(format!("{}: no se pudo abrir la salida de audio", source.name()));
+        }
+        self.close_sink();
+        self.current = None;
+        self.playing = false;
+        self.emit(PlayerEvent::Stopped);
+    }
+
     fn finish(&mut self) {
         self.close_sink();
         self.current = None;
@@ -343,13 +355,13 @@ impl Worker {
         if self.sink.is_none() {
             let mut sink = (self.backend)(self.device.clone(), AudioFormat::default());
             if sink.start().is_err() {
-                return self.fail(source, None);
+                return self.sink_fail(source);
             }
             self.sink = Some(sink);
         }
         let sink = self.sink.as_mut().unwrap();
         if sink.write(AudioPacket::Samples(stereo), &mut self.converter).is_err() {
-            self.fail(source, None);
+            self.sink_fail(source);
         }
     }
 }
@@ -550,5 +562,28 @@ pub(crate) mod tests {
         let failed = got.iter().position(|e| matches!(e, Event::Queue(crate::queue::QueueEvent::TrackFailed(u)) if *u == uri));
         let finished = got.iter().position(|e| matches!(e, Event::Player(PlayerEvent::FinishedTrack)));
         assert!(failed.is_some() && failed < finished, "{}", got.len());
+    }
+
+    struct BrokenSink;
+    impl Sink for BrokenSink {
+        fn start(&mut self) -> SinkResult<()> {
+            Err(librespot_playback::audio_backend::SinkError::NotConnected("sin dispositivo".into()))
+        }
+        fn write(&mut self, _: AudioPacket, _: &mut Converter) -> SinkResult<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn sink_failure_stops_without_marking_the_track_or_advancing() {
+        let (sink, _keep) = crossbeam_channel::unbounded();
+        let events = EventManager::new(sink);
+        let p = spawn_with_resolver(events.clone(), |_, _| Box::new(BrokenSink), None, 65535, tone_resolver());
+        load(&p, true);
+        std::thread::sleep(Duration::from_secs(2));
+        let got: Vec<_> = events.msg_iter().collect();
+        assert!(!got.iter().any(|e| matches!(e, Event::Queue(_))), "{}", got.len());
+        assert!(!got.iter().any(|e| matches!(e, Event::Player(PlayerEvent::FinishedTrack))));
+        assert!(got.iter().any(|e| matches!(e, Event::Player(PlayerEvent::Stopped))));
     }
 }
