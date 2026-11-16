@@ -12,6 +12,8 @@ use url::Url;
 pub const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 const TOKEN_URL: &str = "https://accounts.spotify.com/api/token";
 
+// usado en la tarea 2
+#[allow(dead_code)]
 pub struct LoginTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -41,32 +43,52 @@ fn auth_url(client_id: &str, redirect: &str, scopes: &[&str], challenge: &str, s
     url.as_str().replace('+', "%20")
 }
 
-/// `Some(code)` only for `GET <path>?code=..&state=<expected_state>`.
-fn parse_callback(request_line: &str, expected_state: &str) -> Option<String> {
+#[derive(Debug, PartialEq)]
+enum Callback {
+    Code(String),
+    Denied,
+    Ignore,
+}
+
+/// `Code` only for `GET <path>?code=..&state=<expected_state>`; `Denied` for the same
+/// state with `error=` (user cancelled).
+fn parse_callback(request_line: &str, expected_state: &str) -> Callback {
     let mut parts = request_line.split_whitespace();
-    if parts.next()? != "GET" {
-        return None;
-    }
-    let url = Url::parse(&format!("http://localhost{}", parts.next()?)).ok()?;
-    let (mut code, mut state_ok) = (None, false);
+    let (Some("GET"), Some(target)) = (parts.next(), parts.next()) else {
+        return Callback::Ignore;
+    };
+    let Ok(url) = Url::parse(&format!("http://localhost{target}")) else {
+        return Callback::Ignore;
+    };
+    let (mut code, mut error, mut state_ok) = (None, false, false);
     for (k, v) in url.query_pairs() {
         match &*k {
             "code" => code = Some(v.into_owned()),
+            "error" => error = true,
             "state" => state_ok = v == expected_state,
             _ => {}
         }
     }
-    code.filter(|_| state_ok)
+    match (state_ok, code, error) {
+        (true, Some(c), _) => Callback::Code(c),
+        (true, None, true) => Callback::Denied,
+        _ => Callback::Ignore,
+    }
 }
 
 fn token_request(form: &[(&str, &str)]) -> Result<LoginTokens, String> {
-    let resp = reqwest::blocking::Client::new()
+    let resp = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?
         .post(TOKEN_URL)
         .form(form)
         .send()
         .map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
-        return Err(format!("token endpoint returned {}", resp.status()));
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("token endpoint returned {status}: {body}"));
     }
     let t: TokenResponse = resp.json().map_err(|e| e.to_string())?;
     Ok(LoginTokens {
@@ -80,6 +102,8 @@ fn token_request(form: &[(&str, &str)]) -> Result<LoginTokens, String> {
     })
 }
 
+// usado en la tarea 2
+#[allow(dead_code)]
 pub fn refresh(client_id: &str, refresh_token: &str) -> Result<LoginTokens, String> {
     token_request(&[
         ("grant_type", "refresh_token"),
@@ -124,19 +148,21 @@ pub fn oauth_login(
         if BufReader::new(&stream).read_line(&mut line).is_err() {
             continue;
         }
-        let code = parse_callback(&line, &state);
-        let body = if code.is_some() {
-            "Listo, podés volver a Spoti"
-        } else {
-            "Solicitud inválida"
+        let cb = parse_callback(&line, &state);
+        let body = match cb {
+            Callback::Code(_) => "Listo, podés volver a Spoti",
+            Callback::Denied => "Inicio de sesión cancelado, podés volver a Spoti",
+            Callback::Ignore => "Solicitud inválida",
         };
         let _ = write!(
             stream,
             "HTTP/1.1 200 OK\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: {}\r\n\r\n{body}",
             body.len()
         );
-        if let Some(code) = code {
-            break code;
+        match cb {
+            Callback::Code(code) => break code,
+            Callback::Denied => return Err("Inicio de sesión cancelado".to_string()),
+            Callback::Ignore => {}
         }
     };
 
@@ -178,10 +204,12 @@ mod test {
     #[test]
     fn parse_callback_rejects_wrong_state_and_missing_code() {
         let p = |l| parse_callback(l, "ST");
-        assert_eq!(p("GET /ncspot_login?code=XYZ&state=ST HTTP/1.1"), Some("XYZ".into()));
-        assert_eq!(p("GET /ncspot_login?code=XYZ&state=OTRO HTTP/1.1"), None);
-        assert_eq!(p("GET /ncspot_login?state=ST HTTP/1.1"), None);
-        assert_eq!(p("GET /favicon.ico HTTP/1.1"), None);
+        assert_eq!(p("GET /ncspot_login?code=XYZ&state=ST HTTP/1.1"), Callback::Code("XYZ".into()));
+        assert_eq!(p("GET /ncspot_login?code=XYZ&state=OTRO HTTP/1.1"), Callback::Ignore);
+        assert_eq!(p("GET /ncspot_login?state=ST HTTP/1.1"), Callback::Ignore);
+        assert_eq!(p("GET /favicon.ico HTTP/1.1"), Callback::Ignore);
+        assert_eq!(p("GET /ncspot_login?error=access_denied&state=ST HTTP/1.1"), Callback::Denied);
+        assert_eq!(p("GET /ncspot_login?error=access_denied&state=OTRO HTTP/1.1"), Callback::Ignore);
     }
 
     #[test]

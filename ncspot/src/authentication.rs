@@ -70,14 +70,12 @@ pub fn find_free_port() -> Result<u16, String> {
 
 enum ClientUriSuffix {
     Ncspot,
-    Spotify,
 }
 
 fn get_client_redirect_uri(suffix: ClientUriSuffix) -> String {
     let auth_port = find_free_port().expect("Could not find free port");
     match suffix {
         ClientUriSuffix::Ncspot => format!("http://127.0.0.1:{auth_port}/ncspot_login"),
-        ClientUriSuffix::Spotify => format!("http://127.0.0.1:{auth_port}/login"),
     }
 }
 
