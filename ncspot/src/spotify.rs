@@ -559,6 +559,10 @@ impl Spotify {
     pub fn stop(&self) {
         info!("stop()");
         self.dispatch(ExtCmd::Stop, WorkerCommand::Stop);
+        // ExtCmd::Stop no emite nada: sin esto el estado en caché quedaría en Playing/Paused
+        if *self.current_source.read().unwrap() != Source::Spotify {
+            self.events.send(Event::Player(PlayerEvent::Stopped));
+        }
     }
 
     /// Seek in the currently played [Playable] played by the [Player].
@@ -719,6 +723,15 @@ mod tests {
         spotify.load(&Playable::Track(track), true, 0);
         let got: Vec<_> = events.msg_iter().collect();
         assert!(matches!(got.as_slice(), [Event::Player(PlayerEvent::FinishedTrack)]));
+    }
+
+    #[test]
+    fn stop_on_external_track_emits_stopped() {
+        let (spotify, events, _keep) = offline();
+        *spotify.current_source.write().unwrap() = Source::YouTube;
+        spotify.stop();
+        let got: Vec<_> = events.msg_iter().collect();
+        assert!(matches!(got.as_slice(), [Event::Player(PlayerEvent::Stopped)]));
     }
 
     #[test]
