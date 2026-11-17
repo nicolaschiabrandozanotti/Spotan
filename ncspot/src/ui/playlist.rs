@@ -80,7 +80,7 @@ impl ViewExt for PlaylistView {
     fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
         if let Command::Delete = cmd {
             if self.playlist.is_read_only() {
-                return Err("SoundCloud: solo lectura".into());
+                return Err(format!("{}: solo lectura", self.playlist.source.name()));
             }
             let pos = self.list.get_selected_index();
 

@@ -1,10 +1,13 @@
 //! Biblioteca de YouTube por links públicos (sin sesión): links, playlists, álbumes y canales.
 //! Parseo de las respuestas de YouTube Music (`WEB_REMIX`) y, para canales comunes, de `WEB`.
 
+use std::collections::HashSet;
+
 use regex::Regex;
-use serde_json::Value;
+use serde_json::{json, Value};
 use url::Url;
 
+use crate::config::config_path;
 use crate::model::album::Album;
 use crate::model::playlist::Playlist;
 use crate::model::track::{Source, Track};
@@ -291,6 +294,159 @@ pub fn parse_resolve(json: &Value) -> Option<String> {
     id.starts_with("UC").then(|| id.to_string())
 }
 
+const LINKS_FILE: &str = "youtube_links";
+const MAX_PAGES: usize = 100;
+const NOT_FOUND: &str = "No encontré esa playlist o canal";
+/// Parámetros de la pestaña Playlists de un canal en la web.
+const WEB_PLAYLISTS_TAB: &str = "EglwbGF5bGlzdHPyBgQKAkIA";
+
+/// Pedido `browse` sin sesión; `remix` = YouTube Music (`WEB_REMIX`), si no la web (`WEB`).
+fn browse(remix: bool, mut body: Value) -> Result<Value, String> {
+    let (host, name, version) = if remix {
+        ("https://music.youtube.com", "WEB_REMIX", "1.20251110.01.00")
+    } else {
+        ("https://www.youtube.com", "WEB", "2.20251110.00.00")
+    };
+    body["context"] = json!({"client": {"clientName": name, "clientVersion": version, "hl": "es", "gl": "AR"}});
+    post(host, "browse?prettyPrint=false", &body)
+}
+
+fn post(host: &str, path: &str, body: &Value) -> Result<Value, String> {
+    let res = super::http()
+        .post(format!("{host}/youtubei/v1/{path}"))
+        .header("Origin", host)
+        .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0")
+        .json(body)
+        .send()
+        .map_err(|e| e.to_string())?;
+    // mixes (RD…), listas privadas (WL, LL) y canales inexistentes responden 400/404
+    if matches!(res.status().as_u16(), 400 | 404) {
+        return Err(NOT_FOUND.into());
+    }
+    res.error_for_status().map_err(|e| e.to_string())?.json().map_err(|e| e.to_string())
+}
+
+/// Sigue las continuaciones desde `first` (tope `MAX_PAGES`).
+fn all_pages<T>(remix: bool, first: Value, parse: impl Fn(&Value) -> (Vec<T>, Option<String>)) -> Result<Vec<T>, String> {
+    let (mut out, mut body) = (Vec::new(), first);
+    for _ in 0..MAX_PAGES {
+        let (items, next) = parse(&browse(remix, body)?);
+        out.extend(items);
+        match next {
+            Some(t) => body = json!({"continuation": t}),
+            None => break,
+        }
+    }
+    Ok(out)
+}
+
+pub fn fetch_playlist_tracks(id: &str) -> Result<Vec<Track>, String> {
+    all_pages(true, json!({"browseId": format!("VL{id}")}), parse_track_page)
+}
+
+pub fn fetch_album_tracks(browse_id: &str) -> Result<Vec<Track>, String> {
+    all_pages(true, json!({"browseId": browse_id}), parse_track_page)
+}
+
+/// Lo que trae un link: título, resumen y las playlists/álbumes que agrega.
+#[derive(Clone, Debug)]
+pub struct YtLinkContent {
+    pub title: String,
+    pub summary: String,
+    pub playlists: Vec<Playlist>,
+    pub albums: Vec<Album>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct YtLibrary {
+    pub playlists: Vec<Playlist>,
+    pub albums: Vec<Album>,
+}
+
+/// "Ver todo" de un carrusel; si falla o viene vacío, quedan los del carrusel.
+fn grid<T>(more: Option<(String, String)>, short: Vec<T>, parse: impl Fn(&Value) -> Vec<T>) -> Result<Vec<T>, String> {
+    let Some((id, params)) = more else { return Ok(short) };
+    let full = parse(&browse(true, json!({"browseId": id, "params": params}))?);
+    Ok(if full.is_empty() { short } else { full })
+}
+
+fn fetch_channel(id: &str) -> Result<YtLinkContent, String> {
+    let json = browse(true, json!({"browseId": id}))?;
+    // un canal común puede traer carrusel de "Vídeos" sin nada que importar: va por la web
+    let artist = parse_artist(&json).filter(|p| !(p.albums.is_empty() && p.singles.is_empty() && p.playlists.is_empty()));
+    let (title, playlists, albums) = if let Some(p) = artist {
+        let name = p.name.clone();
+        let mut albums = grid(p.albums_more, p.albums, |j| parse_album_grid(j, &name))?;
+        albums.extend(grid(p.singles_more, p.singles, |j| parse_album_grid(j, &name))?);
+        (p.name.clone(), grid(p.playlists_more, p.playlists, |j| parse_playlist_grid(j, &name))?, albums)
+    } else {
+        let web = browse(false, json!({"browseId": id, "params": WEB_PLAYLISTS_TAB}))?;
+        let title = collect(&web, "channelMetadataRenderer").first().map(|m| m["title"].as_str().unwrap_or_default().to_string()).unwrap_or_default();
+        let first = |j: &Value| parse_web_playlists(j, &title);
+        let (mut lists, mut next) = first(&web);
+        for _ in 1..MAX_PAGES {
+            let Some(t) = next else { break };
+            let (more, n) = first(&browse(false, json!({"continuation": t}))?);
+            lists.extend(more);
+            next = n;
+        }
+        (title.clone(), lists, vec![])
+    };
+    if playlists.is_empty() && albums.is_empty() {
+        return Err(NOT_FOUND.into());
+    }
+    let summary = format!("canal · {} listas · {} álbumes", playlists.len(), albums.len());
+    Ok(YtLinkContent { title, summary, playlists, albums })
+}
+
+pub fn fetch_link(url: &str) -> Result<YtLinkContent, String> {
+    match parse_link(url).ok_or("Link de YouTube no válido")? {
+        YtLink::Playlist(id) => {
+            let json = browse(true, json!({"browseId": format!("VL{id}")}))?;
+            let p = parse_playlist_header(&json, &id).ok_or(NOT_FOUND)?;
+            Ok(YtLinkContent { title: p.name.clone(), summary: format!("playlist · {} temas", p.num_tracks), playlists: vec![p], albums: vec![] })
+        }
+        YtLink::Channel(id) => fetch_channel(&id),
+        YtLink::Handle(h) => {
+            let body = json!({"url": format!("https://www.youtube.com/@{h}"), "context": {"client": {"clientName": "WEB", "clientVersion": "2.20251110.00.00", "hl": "es", "gl": "AR"}}});
+            let id = parse_resolve(&post("https://www.youtube.com", "navigation/resolve_url?prettyPrint=false", &body)?).ok_or(NOT_FOUND)?;
+            fetch_channel(&id)
+        }
+    }
+}
+
+/// Une los contenidos en orden de links, sin repetir id dentro de cada tipo.
+pub fn merge_contents(contents: Vec<YtLinkContent>) -> YtLibrary {
+    let (mut lib, mut seen_p, mut seen_a) = (YtLibrary::default(), HashSet::new(), HashSet::new());
+    for c in contents {
+        lib.playlists.extend(c.playlists.into_iter().filter(|p| seen_p.insert(p.id.clone())));
+        lib.albums.extend(c.albums.into_iter().filter(|a| seen_a.insert(a.id.clone())));
+    }
+    lib
+}
+
+/// Si un link falla, error (nada parcial).
+pub fn fetch_links(urls: &[String]) -> Result<YtLibrary, String> {
+    Ok(merge_contents(urls.iter().map(|u| fetch_link(u)).collect::<Result<_, _>>()?))
+}
+
+pub fn links() -> Vec<String> {
+    let text = std::fs::read_to_string(config_path(LINKS_FILE)).unwrap_or_default();
+    text.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()
+}
+
+/// Vacío borra el archivo.
+pub fn set_links(urls: &[String]) -> Result<(), String> {
+    let path = config_path(LINKS_FILE);
+    if urls.is_empty() {
+        return match std::fs::remove_file(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        };
+    }
+    std::fs::write(path, urls.join("\n")).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,5 +541,45 @@ mod tests {
     #[test]
     fn resolve_handle() {
         assert_eq!(parse_resolve(&fx("yt_resolve")).as_deref(), Some("UCDPM_n1atn2ijUwHd0NNRQw"));
+    }
+
+    fn content(ids: &[&str]) -> YtLinkContent {
+        let (p, _) = parse_web_playlists(&fx("yt_web_playlists_cont"), "x");
+        let playlists = ids.iter().map(|i| Playlist { id: i.to_string(), ..p[0].clone() }).collect();
+        YtLinkContent { title: String::new(), summary: String::new(), playlists, albums: vec![] }
+    }
+
+    #[test]
+    fn dedup_across_links() {
+        let lib = merge_contents(vec![content(&["a", "b"]), content(&["c", "a"])]);
+        assert_eq!(lib.playlists.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn links_file_roundtrip() {
+        let _g = crate::config::test_sandbox();
+        assert!(links().is_empty());
+        let l = vec!["https://www.youtube.com/@a".to_string(), "https://www.youtube.com/@b".to_string()];
+        set_links(&l).unwrap();
+        assert_eq!(links(), l);
+        set_links(&[]).unwrap();
+        assert!(links().is_empty() && !config_path(LINKS_FILE).exists());
+    }
+
+    #[test]
+    #[ignore]
+    fn yt_live() {
+        let p = fetch_link("https://www.youtube.com/playlist?list=PLD4WCKZfeUfs").unwrap();
+        assert!(!p.playlists.is_empty());
+        let c = fetch_link("https://www.youtube.com/@coldplay").unwrap();
+        assert!(c.albums.len() >= 10 && !c.playlists.is_empty(), "{}", c.summary);
+        let m = fetch_link("https://www.youtube.com/@mkbhd").unwrap();
+        assert!(m.playlists.len() >= 10 && m.albums.is_empty(), "{}", m.summary);
+        let ted = fetch_link("https://www.youtube.com/@TED").unwrap();
+        assert!(ted.playlists.len() > 30, "{}", ted.summary);
+        assert!(fetch_link("https://www.youtube.com/playlist?list=WL").is_err());
+        assert!(fetch_link("https://www.youtube.com/playlist?list=RDdQw4w9WgXcQ").is_err());
+        assert!(fetch_playlist_tracks("PLD4WCKZfeUfs").unwrap().len() >= 150);
+        assert_eq!(fetch_album_tracks("MPREb_pnVvyDhXXd0").unwrap().len(), 10);
     }
 }

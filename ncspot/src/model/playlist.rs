@@ -49,8 +49,11 @@ impl Playlist {
             return;
         }
 
-        self.tracks = if self.source == Source::SoundCloud {
-            crate::external::sc_library::fetch_playlist_tracks(&self.id)
+        self.tracks = if self.source != Source::Spotify {
+            match self.source {
+                Source::YouTube => crate::external::yt_library::fetch_playlist_tracks(&self.id),
+                _ => crate::external::sc_library::fetch_playlist_tracks(&self.id),
+            }
                 .map(|t| t.into_iter().map(Playable::Track).collect())
                 .map_err(|e| warn!("Failed to load the tracks of playlist {}: {e}", self.name))
                 .ok()

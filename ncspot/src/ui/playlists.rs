@@ -58,16 +58,16 @@ impl ViewExt for PlaylistsView {
 
     fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
         if let Command::Delete = cmd {
-            let is_sc = self
+            let ro = self
                 .list
                 .list
                 .content()
                 .read()
                 .unwrap()
                 .get(self.list.list.get_selected_index())
-                .is_some_and(|p| p.is_read_only());
-            if is_sc {
-                return Err("SoundCloud: solo lectura".into());
+                .and_then(|p| p.is_read_only().then_some(p.source));
+            if let Some(source) = ro {
+                return Err(format!("{}: solo lectura", source.name()));
             }
             if let Some(dialog) = self.delete_dialog() {
                 s.add_layer(dialog);

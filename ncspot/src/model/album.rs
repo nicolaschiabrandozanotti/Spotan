@@ -70,15 +70,19 @@ impl Album {
             return;
         }
 
-        if self.source == Source::SoundCloud {
+        if self.source != Source::Spotify {
             let Some(id) = self.id.as_deref() else { return };
-            match crate::external::sc_library::fetch_playlist_tracks(id) {
+            let loaded = match self.source {
+                Source::YouTube => crate::external::yt_library::fetch_album_tracks(id),
+                _ => crate::external::sc_library::fetch_playlist_tracks(id),
+            };
+            match loaded {
                 Ok(tracks) => {
                     self.total_tracks = Some(tracks.len());
                     self.tracks = Some(tracks);
                 }
                 // se deja sin cargar para reintentar al abrir de nuevo
-                Err(e) => warn!("Failed to load SoundCloud album {id}: {e}"),
+                Err(e) => warn!("Failed to load external album {id}: {e}"),
             }
             return;
         }
