@@ -88,10 +88,18 @@ Con SoundCloud marcado, en **Ajustes** (`F4`), bajo *Otros servicios*, pegá el 
 - Se actualiza al abrir Spoti y con `Shift+U`. También anda sin Spotify (*Entrar sin Spotify* + perfil).
 - Es **solo lectura**: no podés borrar ni dar me gusta a nada de SoundCloud desde Spoti (`SoundCloud: solo lectura`).
 
+### Tu biblioteca de YouTube
+
+Con YouTube marcado, en **Ajustes** (`F4`), bajo *Otros servicios*, pegá un link en **Links** (`Ctrl+V` o clic derecho) y tocá **Agregar**. Cada link tiene su **Quitar**.
+
+- Sirven links públicos de playlists o canales de YouTube y YouTube Music: `youtube.com/playlist?list=…`, `music.youtube.com/playlist?list=…`, `youtube.com/@usuario` y `youtube.com/channel/UC…`. No hace falta iniciar sesión.
+- Una playlist va en *Listas*. De un canal de artista salen sus álbumes y sencillos/EPs en *Álbumes* y sus playlists en *Listas*; de un canal común, sus playlists públicas en *Listas*. Se mezclan con Spotify y SoundCloud con la misma barra de filtros (`[YT]`).
+- Se actualiza al abrir Spoti y con `Shift+U`. Es **solo lectura** (`YouTube: solo lectura`).
+
 Bueno saber:
 - **No hace falta cuenta** de YouTube ni de SoundCloud. Spoti decodifica el audio adentro (AAC); no usa yt-dlp, mpv ni navegador.
 - Apagados **no consumen nada**: el motor de YouTube/SoundCloud arranca recién con el primer tema de esos servicios (unos 2 MiB más de RAM mientras suenan) y, si los apagás, se cierra al pasar al siguiente tema.
-- YouTube no tiene inicio de sesión ni biblioteca (solo buscar y escuchar); de SoundCloud se carga la biblioteca pública (ver arriba). *Similares* y *Agregar a playlist* son solo para temas de Spotify.
+- YouTube no tiene inicio de sesión (su biblioteca sale de links públicos, ver arriba); de SoundCloud se carga la biblioteca pública (ver arriba). *Similares* y *Agregar a playlist* son solo para temas de Spotify.
 - En SoundCloud, algunos temas son vistas previas de 30 s (los que exigen SoundCloud Go+); los temas con cifrado no se pueden reproducir y se saltean.
 - Si YouTube o SoundCloud cambian algo de su lado, puede dejar de andar hasta la próxima versión de Spoti.
 

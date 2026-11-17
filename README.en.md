@@ -88,10 +88,18 @@ With SoundCloud ticked, in **Settings** (`F4`), under *Other services*, paste yo
 - It refreshes when Spoti starts and with `Shift+U`. It also works without Spotify (*Entrar sin Spotify* + profile).
 - It is **read-only**: you can't delete or like anything from SoundCloud in Spoti (`SoundCloud: solo lectura`).
 
+### Your YouTube library
+
+With YouTube ticked, in **Settings** (`F4`), under *Other services*, paste a link into **Links** (`Ctrl+V` or right-click) and press **Agregar** (Add). Each link has its own **Quitar** (Remove).
+
+- Public YouTube and YouTube Music playlist or channel links work: `youtube.com/playlist?list=…`, `music.youtube.com/playlist?list=…`, `youtube.com/@handle` and `youtube.com/channel/UC…`. No login needed.
+- A playlist goes in *Listas* (Lists). An artist channel brings its albums and singles/EPs to *Álbumes* (Albums) and its playlists to *Listas*; a regular channel brings its public playlists to *Listas*. They mix with Spotify and SoundCloud under the same filter bar (`[YT]`).
+- It refreshes when Spoti starts and with `Shift+U`. It is **read-only** (`YouTube: solo lectura`).
+
 Good to know:
 - **No YouTube or SoundCloud account needed.** Spoti decodes the audio itself (AAC); no yt-dlp, mpv or browser.
 - When off they **cost nothing**: the YouTube/SoundCloud engine starts with the first track from those services (about 2 MiB more RAM while playing) and, if you turn them off, shuts down on the next track.
-- YouTube has no login or library (search and play only); for SoundCloud your public library can be loaded (see above). *Similar tracks* and *Add to playlist* are Spotify-only.
+- YouTube has no login (its library comes from public links, see above); for SoundCloud your public library can be loaded (see above). *Similar tracks* and *Add to playlist* are Spotify-only.
 - On SoundCloud some tracks are 30 s previews (Go+ only); encrypted tracks can't be played and are skipped.
 - If YouTube or SoundCloud change something on their side, it may stop working until the next Spoti release.
 
