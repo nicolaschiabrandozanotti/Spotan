@@ -6,7 +6,7 @@ use cursive::traits::{Nameable, Resizable};
 use cursive::utils::markup::StyledString;
 use cursive::view::{View, ViewWrapper};
 use cursive::{Cursive, Printer, Rect, Vec2};
-use cursive::views::{Button, Checkbox, DummyView, EditView, LinearLayout, NamedView, OnEventView, TextView};
+use cursive::views::{Button, Checkbox, Dialog, DummyView, EditView, LinearLayout, NamedView, OnEventView, TextView};
 use librespot_core::authentication::Credentials as RespotCredentials;
 
 use crate::application::UserData;
@@ -42,6 +42,11 @@ const YT_STATUS: &str = "settings_yt_status";
 const YT_LIST: &str = "settings_yt_list";
 const BTN_YT_ADD: &str = "settings_btn_yt_add";
 const BTN_YT_REMOVE: &str = "settings_btn_yt_remove_";
+const YTS_STATUS: &str = "settings_yts_status";
+const YTS_PASTE: &str = "settings_yts_paste";
+const YTS_PASTE_ERR: &str = "settings_yts_paste_err";
+/// Botones de la sesión de YouTube: Tomar de Firefox, Pegar, Abrir y Quitar.
+const YTS_BUTTONS: [&str; 4] = ["settings_btn_yts_ff", "settings_btn_yts_paste", "settings_btn_yts_open", "settings_btn_yts_remove"];
 
 /// Marker left in the start screen's user data by "Entrar sin Spotify".
 pub struct EnterWithoutSpotify;
@@ -59,6 +64,10 @@ pub enum LibraryChange {
     YtLinksChanged,
     /// Se prendió o apagó YouTube: recalcular las vistas.
     YtToggled,
+    /// Se guardó una sesión de YouTube: volver a bajar la biblioteca de la cuenta.
+    YtSessionChanged,
+    /// Se quitó la sesión: vaciar lo de la cuenta (y bajar de nuevo solo lo de los links).
+    YtSessionRemoved,
 }
 
 /// "Entrar sin Spotify" needs at least one external service on.
@@ -104,6 +113,138 @@ fn set_yt_enabled(s: &mut Cursive, on: bool) {
     for i in 0..yt_library::links().len() {
         s.call_on_name(&format!("{BTN_YT_REMOVE}{i}"), |b: &mut Button| b.set_enabled(on));
     }
+    for name in YTS_BUTTONS {
+        s.call_on_name(name, |b: &mut Button| b.set_enabled(on));
+    }
+}
+
+/// Estado de la sesión de YouTube para Ajustes; nunca incluye la cookie.
+fn session_status(has_cookie: bool, has_permission: bool, from_paste: bool) -> &'static str {
+    match (has_cookie, has_permission, from_paste) {
+        (false, ..) => "sin sesión",
+        (true, true, _) => "conectada (desde Firefox, se renueva sola)",
+        (true, false, true) => "conectada (pegada)",
+        (true, false, false) => "conectada (desde Firefox)",
+    }
+}
+
+fn session_status_line() -> String {
+    let st = session_status(
+        yt_library::session_cookie().is_some(),
+        yt_library::firefox_profile().is_some(),
+        yt_library::session_pasted(),
+    );
+    format!("    Sesión: {st}")
+}
+
+fn refresh_yt_session(s: &mut Cursive) {
+    s.call_on_name(YTS_STATUS, |v: &mut TextView| v.set_content(session_status_line()));
+}
+
+/// Guarda la sesión (y de dónde salió) y avisa a la biblioteca si YouTube está prendido.
+fn save_yt_session(
+    s: &mut Cursive,
+    cookie: &str,
+    profile: Option<&std::path::Path>,
+    pasted: bool,
+    on_change: &dyn Fn(LibraryChange),
+) {
+    let saved = yt_library::set_session_cookie(Some(cookie))
+        .and_then(|()| yt_library::set_firefox_profile(profile))
+        .and_then(|()| yt_library::set_session_pasted(pasted));
+    refresh_yt_session(s);
+    match saved {
+        Ok(()) => {
+            set_text(s, YT_STATUS, String::new());
+            // apagado: queda guardada y se baja al prender YouTube
+            if crate::external::enabled().contains(&Source::YouTube) {
+                on_change(LibraryChange::YtSessionChanged);
+            }
+        }
+        Err(e) => set_text(s, YT_STATUS, format!("Error: {e}")),
+    }
+}
+
+fn take_from_firefox(s: &mut Cursive, renew: bool, on_change: Arc<dyn Fn(LibraryChange) + Send + Sync>) {
+    set_text(s, YT_STATUS, format!("Leyendo Firefox{}", crate::utils::glyph("…", "...")));
+    s.call_on_name(YTS_BUTTONS[0], |b: &mut Button| b.set_enabled(false));
+    let sink = s.cb_sink().clone();
+    std::thread::spawn(move || {
+        let result = crate::external::firefox_cookies::find_session();
+        let _ = sink.send(Box::new(move |s| {
+            let still_on = crate::external::enabled().contains(&Source::YouTube);
+            s.call_on_name(YTS_BUTTONS[0], |b: &mut Button| b.set_enabled(still_on));
+            match result {
+                Ok((profile, c)) => {
+                    save_yt_session(s, &c.header, renew.then_some(profile.as_path()), false, &*on_change)
+                }
+                Err(e) => set_text(s, YT_STATUS, format!("Error: {e}")),
+            }
+        }));
+    });
+}
+
+fn ask_firefox(s: &mut Cursive, on_change: Arc<dyn Fn(LibraryChange) + Send + Sync>) {
+    let (a, b) = (on_change.clone(), on_change);
+    s.add_layer(
+        Dialog::text("Spotan va a leer tu sesión de music.youtube.com desde Firefox. ¿Permitir y renovarla sola cuando venza?")
+            .button("Permitir y renovar sola", move |s| {
+                s.pop_layer();
+                take_from_firefox(s, true, a.clone());
+            })
+            .button("Solo esta vez", move |s| {
+                s.pop_layer();
+                take_from_firefox(s, false, b.clone());
+            })
+            .button("Cancelar", |s| {
+                s.pop_layer();
+            }),
+    );
+}
+
+fn ask_paste(s: &mut Cursive, on_change: Arc<dyn Fn(LibraryChange) + Send + Sync>) {
+    // campo oculto y siempre vacío: no se muestra la cookie, ni la guardada ni la pegada
+    let field = OnEventView::new(EditView::new().secret().with_name(YTS_PASTE))
+        .on_pre_event_inner(EventTrigger::from_fn(is_paste), |v, _| paste_into(v))
+        .max_width(CLIENT_ID_WIDTH);
+    s.add_layer(
+        Dialog::around(
+            LinearLayout::vertical()
+                .child(TextView::new(hint("F12 > Red > cualquier pedido a music.youtube.com > Encabezados > Cookie")))
+                .child(field)
+                .child(TextView::new("").with_name(YTS_PASTE_ERR)),
+        )
+        .title("Pegar sesión de YouTube")
+        .button("Guardar", move |s| {
+            let input = s.call_on_name(YTS_PASTE, |v: &mut EditView| v.get_content()).unwrap_or_default();
+            match yt_library::clean_pasted_cookie(&input) {
+                Ok(cookie) => {
+                    s.pop_layer();
+                    save_yt_session(s, &cookie, None, true, &*on_change);
+                }
+                Err(e) => set_text(s, YTS_PASTE_ERR, e),
+            }
+        })
+        .button("Cancelar", |s| {
+            s.pop_layer();
+        }),
+    );
+}
+
+fn remove_yt_session(s: &mut Cursive, on_change: &dyn Fn(LibraryChange)) {
+    let removed = yt_library::set_session_cookie(None)
+        .and_then(|()| yt_library::set_firefox_profile(None))
+        .and_then(|()| yt_library::set_session_pasted(false));
+    refresh_yt_session(s);
+    if let Err(e) = removed {
+        return set_text(s, YT_STATUS, format!("Error: {e}"));
+    }
+    set_text(s, YT_STATUS, String::new());
+    if yt_library::links().is_empty() {
+        // en la pantalla de inicio no hay Library que lo haga
+        crate::library::remove_yt_cache();
+    }
+    on_change(LibraryChange::YtSessionRemoved);
 }
 
 /// Por qué no se pudo agregar un link; la UI pone el prefijo `Error:` solo a los fallos.
@@ -489,6 +630,33 @@ impl SettingsView {
         layout.add_child(TextView::new(hint(
             "    Pegá links de playlists o canales públicos. Ctrl+V o clic derecho para pegar.",
         )));
+        let [ff_name, paste_name, open_name, remove_name] = YTS_BUTTONS;
+        let (ff_cb, paste_cb, remove_cb) = (on_sc_change.clone(), on_sc_change.clone(), on_sc_change.clone());
+        let mut yts_remove = Button::new("Quitar", move |s| remove_yt_session(s, &*remove_cb));
+        let mut yts_ff = Button::new("Tomar de Firefox", move |s| ask_firefox(s, ff_cb.clone()));
+        let mut yts_paste = Button::new("Pegar", move |s| ask_paste(s, paste_cb.clone()));
+        let mut yts_open = Button::new("Abrir music.youtube.com", |_| {
+            open::that_in_background("https://music.youtube.com");
+        });
+        for b in [&mut yts_remove, &mut yts_ff, &mut yts_paste, &mut yts_open] {
+            b.set_enabled(yt_on);
+        }
+        layout.add_child(
+            LinearLayout::horizontal()
+                .child(TextView::new(session_status_line()).with_name(YTS_STATUS))
+                .child(DummyView.fixed_width(1))
+                .child(yts_remove.with_name(remove_name)),
+        );
+        layout.add_child(
+            LinearLayout::horizontal()
+                .child(TextView::new("      "))
+                .child(yts_ff.with_name(ff_name))
+                .child(DummyView.fixed_width(1))
+                .child(yts_paste.with_name(paste_name))
+                .child(DummyView.fixed_width(1))
+                .child(yts_open.with_name(open_name)),
+        );
+        layout.add_child(TextView::new(hint("    Da acceso de lectura a tu cuenta de YouTube Music.")));
         layout.add_child(service_checkbox(Source::SoundCloud, "SoundCloud", on_sc_change.clone()));
         let sc_on = crate::external::enabled().contains(&Source::SoundCloud);
         let (load_cb, remove_cb) = (on_sc_change.clone(), on_sc_change.clone());
@@ -705,6 +873,14 @@ mod tests {
                 runner.refresh();
             }
         }
+    }
+
+    #[test]
+    fn session_status_texts() {
+        assert_eq!(session_status(false, false, false), "sin sesión");
+        assert_eq!(session_status(true, true, false), "conectada (desde Firefox, se renueva sola)");
+        assert_eq!(session_status(true, false, false), "conectada (desde Firefox)");
+        assert_eq!(session_status(true, false, true), "conectada (pegada)");
     }
 
     #[test]

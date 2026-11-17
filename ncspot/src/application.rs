@@ -319,6 +319,8 @@ impl Application {
                         library.clear_youtube()
                     }
                     ui::settings::LibraryChange::YtLinksChanged => library.update_youtube(),
+                    ui::settings::LibraryChange::YtSessionChanged => library.update_youtube(),
+                    ui::settings::LibraryChange::YtSessionRemoved => library.clear_youtube_session(),
                     ui::settings::LibraryChange::YtToggled => library.yt_visibility_changed(),
                 }
             }),

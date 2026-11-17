@@ -474,6 +474,7 @@ pub fn set_links(urls: &[String]) -> Result<(), String> {
 
 const COOKIE_FILE: &str = "youtube_cookies";
 const FIREFOX_FILE: &str = "youtube_firefox";
+const SOURCE_FILE: &str = "youtube_session_source";
 const NO_SAPISID: &str = "Error: Eso no parece la cookie de music.youtube.com (falta SAPISID)";
 
 fn read_trimmed(name: &str) -> Option<String> {
@@ -512,6 +513,15 @@ pub fn firefox_profile() -> Option<PathBuf> {
 
 pub fn set_firefox_profile(profile: Option<&Path>) -> Result<(), String> {
     write_private(FIREFOX_FILE, profile.map(|p| p.to_string_lossy()).as_deref())
+}
+
+/// Si la sesión guardada se pegó a mano (y no se tomó de Firefox); solo para mostrarlo en Ajustes.
+pub fn session_pasted() -> bool {
+    read_trimmed(SOURCE_FILE).as_deref() == Some("pegada")
+}
+
+pub fn set_session_pasted(pasted: bool) -> Result<(), String> {
+    write_private(SOURCE_FILE, pasted.then_some("pegada"))
 }
 
 fn cookie_value<'a>(cookie: &'a str, name: &str) -> Option<&'a str> {
