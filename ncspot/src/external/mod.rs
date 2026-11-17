@@ -15,6 +15,7 @@ pub mod player;
 pub mod sc_library;
 pub mod soundcloud;
 pub mod stream;
+pub mod yt_library;
 pub mod youtube;
 
 /// Orden fijo de los servicios externos.
