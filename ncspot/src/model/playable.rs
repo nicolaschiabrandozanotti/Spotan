@@ -5,7 +5,7 @@ use crate::library::Library;
 use crate::model::album::Album;
 use crate::model::artist::Artist;
 use crate::model::episode::Episode;
-use crate::model::track::Track;
+use crate::model::track::{Source, Track};
 use crate::queue::Queue;
 use crate::traits::{ListItem, ViewExt};
 use crate::utils::ms_to_hms;
@@ -234,6 +234,10 @@ impl ListItem for Playable {
 
     fn share_url(&self) -> Option<String> {
         self.as_listitem().share_url()
+    }
+
+    fn read_only_source(&self) -> Option<Source> {
+        self.as_listitem().read_only_source()
     }
 
     fn album(&self, queue: &Queue) -> Option<Album> {

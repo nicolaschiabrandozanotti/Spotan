@@ -9,7 +9,7 @@ use crate::commands::CommandResult;
 use crate::library::Library;
 use crate::model::album::Album;
 use crate::model::artist::Artist;
-use crate::model::track::Track;
+use crate::model::track::{Source, Track};
 use crate::queue::Queue;
 
 pub trait ListItem: Sync + Send + 'static {
@@ -34,6 +34,11 @@ pub trait ListItem: Sync + Send + 'static {
         None
     }
     fn share_url(&self) -> Option<String>;
+
+    /// Servicio de origen si este elemento es de solo lectura (no es de Spotify).
+    fn read_only_source(&self) -> Option<Source> {
+        None
+    }
 
     /// Get the album that contains this [ListItem].
     fn album(&self, _queue: &Queue) -> Option<Album> {

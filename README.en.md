@@ -84,7 +84,7 @@ Without Spotify: on the start screen tick YouTube and/or SoundCloud and press **
 With SoundCloud ticked, in **Settings** (`F4`), under *Other services*, paste your profile link into **Perfil:** (`Ctrl+V` or right-click) and press **Cargar** (Load). A summary shows below, e.g. `Forss · 288 Likes · 4 playlists`. **Quitar** (Remove) clears it.
 
 - It loads your *Likes*, your playlists and the playlists you saved, all public and with no login. Private items are not visible.
-- In **Library** (`F3`), the *Temas* (Tracks) and *Listas* (Lists) tabs mix Spotify and SoundCloud (`[S]` / `[SC]`), with a `[1 Spotify] [2 SoundCloud]` filter bar (keys `1` and `2`).
+- In **Library** (`F3`), the *Temas* (Tracks), *Listas* (Lists) and *Álbumes* (Albums) tabs mix Spotify and SoundCloud (`[S]` / `[SC]`), with a `[1 Spotify] [2 SoundCloud]` filter bar (keys `1` and `2`). SoundCloud albums and EPs go in *Albums* (not in *Lists*) and open and play like any album; without Spotify, that tab shows the SoundCloud ones.
 - It refreshes when Spoti starts and with `Shift+U`. It also works without Spotify (*Entrar sin Spotify* + profile).
 - It is **read-only**: you can't delete or like anything from SoundCloud in Spoti (`SoundCloud: solo lectura`).
 

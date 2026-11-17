@@ -1567,10 +1567,11 @@ mod tests {
         let lib = sc_test_library();
         let g = lib.generation();
         // perfil cambiado o quitado mientras bajaba
-        lib.apply_sc_result("https://soundcloud.com/otro", Ok(sc_lib(vec![sc_track("1")], vec![sc_playlist("p")], vec![])));
+        lib.apply_sc_result("https://soundcloud.com/otro", Ok(sc_lib(vec![sc_track("1")], vec![sc_playlist("p")], vec![sc_album("a")])));
         sc_library::set_profile(None).unwrap();
-        lib.apply_sc_result(SC_URL, Ok(sc_lib(vec![sc_track("1")], vec![], vec![])));
+        lib.apply_sc_result(SC_URL, Ok(sc_lib(vec![sc_track("1")], vec![], vec![sc_album("a")])));
         assert!(lib.sc_tracks.read().unwrap().is_empty());
+        assert!(lib.sc_albums.read().unwrap().is_empty());
         assert!(lib.sc_playlists.read().unwrap().is_empty());
         assert!(!config::cache_path(CACHE_SC_TRACKS).exists());
         assert_eq!(lib.generation(), g);
@@ -1625,9 +1626,10 @@ mod tests {
     fn sc_failed_update_keeps_previous() {
         let (_g, _d) = crate::config::test_sandbox();
         let lib = sc_test_library();
-        lib.apply_sc_result(SC_URL, Ok(sc_lib(vec![sc_track("1")], vec![sc_playlist("p")], vec![])));
+        lib.apply_sc_result(SC_URL, Ok(sc_lib(vec![sc_track("1")], vec![sc_playlist("p")], vec![sc_album("a")])));
         let g = lib.generation();
         lib.apply_sc_result(SC_URL, Err("red".into()));
+        assert_eq!(lib.sc_albums.read().unwrap().len(), 1);
         assert_eq!(lib.sc_tracks.read().unwrap().len(), 1);
         assert_eq!(lib.sc_playlists.read().unwrap().len(), 1);
         assert_eq!(lib.generation(), g);
@@ -1640,6 +1642,12 @@ mod tests {
         lib.apply_sc_result(SC_URL, Ok(sc_lib(vec![sc_track("1")], vec![], vec![])));
         assert!(lib.is_saved_track(&Playable::Track(sc_track("1"))));
         assert!(!lib.is_saved_track(&Playable::Track(sc_track("2"))));
+    }
+
+    #[test]
+    fn sc_playlist_read_only_source() {
+        assert_eq!(sc_playlist("p").read_only_source(), Some(Source::SoundCloud));
+        assert_eq!(playlist("", 0, None).read_only_source(), None);
     }
 
     #[test]

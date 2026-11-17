@@ -374,6 +374,10 @@ impl ListItem for Playlist {
         })
     }
 
+    fn read_only_source(&self) -> Option<Source> {
+        self.is_read_only().then_some(self.source)
+    }
+
     fn share_url(&self) -> Option<String> {
         if self.is_read_only() {
             return None;

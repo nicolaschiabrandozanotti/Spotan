@@ -546,6 +546,9 @@ impl<I: ListItem + Clone> ViewExt for ListView<I> {
                 };
 
                 if let Some(item) = item.as_mut() {
+                    if let Some(source) = item.read_only_source() {
+                        return Err(format!("{}: solo lectura", source.name()));
+                    }
                     item.save(&self.library);
                 }
 
@@ -577,6 +580,9 @@ impl<I: ListItem + Clone> ViewExt for ListView<I> {
                 };
 
                 if let Some(item) = item.as_mut() {
+                    if let Some(source) = item.read_only_source() {
+                        return Err(format!("{}: solo lectura", source.name()));
+                    }
                     item.unsave(&self.library);
                 }
 

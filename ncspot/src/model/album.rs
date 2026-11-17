@@ -364,11 +364,15 @@ impl ListItem for Album {
 
     fn share_url(&self) -> Option<String> {
         if self.is_read_only() {
-            return None;
+            return self.url.clone();
         }
         self.id
             .clone()
             .map(|id| format!("https://open.spotify.com/album/{id}"))
+    }
+
+    fn read_only_source(&self) -> Option<Source> {
+        self.is_read_only().then_some(self.source)
     }
 
     fn artists(&self) -> Option<Vec<Artist>> {
@@ -414,9 +418,10 @@ mod tests {
 
     #[test]
     fn sc_album_is_read_only() {
-        let a = Album::new_external(Source::SoundCloud, "1815863".into(), "Ecclesia".into(), Some("Forss".into()), "2015".into(), None, None, 10);
+        let a = Album::new_external(Source::SoundCloud, "1815863".into(), "Ecclesia".into(), Some("Forss".into()), "2015".into(), None, Some("https://soundcloud.com/forss/sets/ecclesia".into()), 10);
         assert!(a.is_read_only());
-        assert_eq!(a.share_url(), None);
+        assert_eq!(a.read_only_source(), Some(Source::SoundCloud));
+        assert_eq!(a.share_url().as_deref(), Some("https://soundcloud.com/forss/sets/ecclesia"));
         assert!(a.artists().unwrap().is_empty());
         assert_eq!(format!("{a}"), "Forss - Ecclesia");
     }

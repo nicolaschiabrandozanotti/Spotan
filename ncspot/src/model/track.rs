@@ -407,6 +407,10 @@ impl ListItem for Track {
             .map(|id| format!("https://open.spotify.com/track/{id}"))
     }
 
+    fn read_only_source(&self) -> Option<Source> {
+        (self.source != Source::Spotify).then_some(self.source)
+    }
+
     fn album(&self, queue: &Queue) -> Option<Album> {
         if self.source != Source::Spotify {
             return None;
@@ -469,6 +473,11 @@ mod tests {
             None,
             "https://www.youtube.com/watch?v=fJ9rUzIMcZQ".into(),
         )
+    }
+
+    #[test]
+    fn read_only_source_only_for_external() {
+        assert_eq!(yt().read_only_source(), Some(Source::YouTube));
     }
 
     #[test]
