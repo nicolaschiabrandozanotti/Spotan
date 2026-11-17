@@ -303,6 +303,7 @@ mod tests {
             "yt_artist" => include_str!("fixtures/yt_artist.json"),
             "yt_grid" => include_str!("fixtures/yt_grid.json"),
             "yt_web_playlists" => include_str!("fixtures/yt_web_playlists.json"),
+            "yt_web_playlists_cont" => include_str!("fixtures/yt_web_playlists_cont.json"),
             "yt_resolve" => include_str!("fixtures/yt_resolve.json"),
             _ => panic!("fixture desconocido: {name}"),
         };
@@ -368,10 +369,17 @@ mod tests {
 
     #[test]
     fn web_playlists_of_common_channel() {
-        let (p, next) = parse_web_playlists(&fx("yt_web_playlists"), "MKBHD");
-        assert_eq!(p[0].id, "PLBsP89CPrMeNIuvr9j3_EQaMwaNJ6rhuQ");
-        assert!(p[0].num_tracks > 0 && next.is_some());
-        assert_eq!((p.len(), p[1].num_tracks), (2, 6));
+        let (p, next) = parse_web_playlists(&fx("yt_web_playlists"), "TED");
+        assert_eq!((p.len(), p[0].id.as_str(), p[0].name.as_str(), p[0].num_tracks), (2, "PLe3qqz7JaEDM", "Best TED Talks on psychology", 11));
+        // el token es el de la grilla, no los del panel de descripción del header
+        assert!(next.unwrap().starts_with("4qmFsgJ4"));
+    }
+
+    #[test]
+    fn web_playlists_continuation() {
+        let (p, next) = parse_web_playlists(&fx("yt_web_playlists_cont"), "TED");
+        assert_eq!((p.len(), p[0].id.as_str(), p[1].num_tracks), (2, "PLOGi5-fAu8bH9T9XWq_5qqacHj7ePrDdw", 11));
+        assert!(next.is_some());
     }
 
     #[test]
