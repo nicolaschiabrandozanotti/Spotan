@@ -336,6 +336,10 @@ impl Library {
 
     /// Carga la caché y baja la biblioteca de YouTube en su propio hilo.
     pub fn update_youtube(&self) {
+        // sin YouTube prendido no se baja nada (yt_visibility_changed lo reintenta al prenderlo)
+        if !crate::external::enabled().contains(&Source::YouTube) {
+            return;
+        }
         let links = yt_library::links();
         if links.is_empty() {
             return;
@@ -1794,6 +1798,17 @@ mod tests {
         assert!(lib.yt_playlists.read().unwrap().is_empty());
         assert!(lib.yt_albums.read().unwrap().is_empty());
         assert!(!config::cache_path(CACHE_YT_PLAYLISTS).exists());
+        assert_eq!(lib.generation(), g);
+    }
+
+    #[test]
+    fn yt_update_does_nothing_while_off() {
+        let (_g, _d) = crate::config::test_sandbox();
+        let (lib, _links) = yt_test_library();
+        crate::external::set_enabled(Source::YouTube, false).unwrap();
+        let g = lib.generation();
+        lib.update_youtube();
+        assert!(lib.yt_inflight.lock().unwrap().is_none());
         assert_eq!(lib.generation(), g);
     }
 

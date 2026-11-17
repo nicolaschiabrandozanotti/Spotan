@@ -182,7 +182,10 @@ fn add_yt_link(s: &mut Cursive, on_change: Arc<dyn Fn(LibraryChange) + Send + Sy
                     s.call_on_name(YT_LINK, |v: &mut EditView| v.set_content(""));
                     set_text(s, YT_STATUS, format!("{} ({})", c.title, c.summary));
                     rebuild_yt_list(s, on_change.clone());
-                    on_change(LibraryChange::YtLinksChanged);
+                    // apagado: el link queda guardado y se baja al prender YouTube
+                    if still_on {
+                        on_change(LibraryChange::YtLinksChanged);
+                    }
                 }
                 Err(e) => set_text(s, YT_STATUS, if e.starts_with("Error") { e } else { format!("Error: {e}") }),
             }
