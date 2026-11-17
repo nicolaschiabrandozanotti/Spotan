@@ -27,7 +27,21 @@ fn valid(s: &str, extra: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || extra.contains(c))
 }
 
+/// Mixes (`RD…`) y listas privadas (`WL`, `LL`, `LM`) no se pueden bajar sin sesión.
+fn reserved(list: &str) -> bool {
+    list.starts_with("RD") || matches!(list, "WL" | "LL" | "LM")
+}
+
 pub fn parse_link(input: &str) -> Option<YtLink> {
+    parse_any_link(input).filter(|l| !matches!(l, YtLink::Playlist(id) if reserved(id)))
+}
+
+/// El link es de una playlist, pero un mix o una lista privada.
+pub fn is_mix_or_private(input: &str) -> bool {
+    matches!(parse_any_link(input), Some(YtLink::Playlist(id)) if reserved(&id))
+}
+
+fn parse_any_link(input: &str) -> Option<YtLink> {
     let s = input.trim();
     let url = Url::parse(&if s.contains("://") { s.to_string() } else { format!("https://{s}") }).ok()?;
     let host = url.host_str()?;
@@ -301,17 +315,18 @@ const NOT_FOUND: &str = "No encontré esa playlist o canal";
 const WEB_PLAYLISTS_TAB: &str = "EglwbGF5bGlzdHPyBgQKAkIA";
 
 /// Pedido `browse` sin sesión; `remix` = YouTube Music (`WEB_REMIX`), si no la web (`WEB`).
-fn browse(remix: bool, mut body: Value) -> Result<Value, String> {
+/// `root`: primer pedido de un link; ahí un 400/404 significa que el link no existe.
+fn browse(remix: bool, root: bool, mut body: Value) -> Result<Value, String> {
     let (host, name, version) = if remix {
         ("https://music.youtube.com", "WEB_REMIX", "1.20251110.01.00")
     } else {
         ("https://www.youtube.com", "WEB", "2.20251110.00.00")
     };
     body["context"] = json!({"client": {"clientName": name, "clientVersion": version, "hl": "es", "gl": "AR"}});
-    post(host, "browse?prettyPrint=false", &body)
+    post(host, "browse?prettyPrint=false", root, &body)
 }
 
-fn post(host: &str, path: &str, body: &Value) -> Result<Value, String> {
+fn post(host: &str, path: &str, root: bool, body: &Value) -> Result<Value, String> {
     let res = super::http()
         .post(format!("{host}/youtubei/v1/{path}"))
         .header("Origin", host)
@@ -319,18 +334,18 @@ fn post(host: &str, path: &str, body: &Value) -> Result<Value, String> {
         .json(body)
         .send()
         .map_err(|e| e.to_string())?;
-    // mixes (RD…), listas privadas (WL, LL) y canales inexistentes responden 400/404
-    if matches!(res.status().as_u16(), 400 | 404) {
+    // canales y playlists inexistentes responden 400/404; en otros pedidos es un error común
+    if root && matches!(res.status().as_u16(), 400 | 404) {
         return Err(NOT_FOUND.into());
     }
     res.error_for_status().map_err(|e| e.to_string())?.json().map_err(|e| e.to_string())
 }
 
 /// Sigue las continuaciones desde `first` (tope `MAX_PAGES`).
-fn all_pages<T>(remix: bool, first: Value, parse: impl Fn(&Value) -> (Vec<T>, Option<String>)) -> Result<Vec<T>, String> {
+fn all_pages<T>(remix: bool, root: bool, first: Value, parse: impl Fn(&Value) -> (Vec<T>, Option<String>)) -> Result<Vec<T>, String> {
     let (mut out, mut body) = (Vec::new(), first);
-    for _ in 0..MAX_PAGES {
-        let (items, next) = parse(&browse(remix, body)?);
+    for page in 0..MAX_PAGES {
+        let (items, next) = parse(&browse(remix, root && page == 0, body)?);
         out.extend(items);
         match next {
             Some(t) => body = json!({"continuation": t}),
@@ -341,11 +356,11 @@ fn all_pages<T>(remix: bool, first: Value, parse: impl Fn(&Value) -> (Vec<T>, Op
 }
 
 pub fn fetch_playlist_tracks(id: &str) -> Result<Vec<Track>, String> {
-    all_pages(true, json!({"browseId": format!("VL{id}")}), parse_track_page)
+    all_pages(true, true, json!({"browseId": format!("VL{id}")}), parse_track_page)
 }
 
 pub fn fetch_album_tracks(browse_id: &str) -> Result<Vec<Track>, String> {
-    all_pages(true, json!({"browseId": browse_id}), parse_track_page)
+    all_pages(true, false, json!({"browseId": browse_id}), parse_track_page)
 }
 
 /// Lo que trae un link: título, resumen y las playlists/álbumes que agrega.
@@ -366,12 +381,12 @@ pub struct YtLibrary {
 /// "Ver todo" de un carrusel; si falla o viene vacío, quedan los del carrusel.
 fn grid<T>(more: Option<(String, String)>, short: Vec<T>, parse: impl Fn(&Value) -> Vec<T>) -> Result<Vec<T>, String> {
     let Some((id, params)) = more else { return Ok(short) };
-    let full = parse(&browse(true, json!({"browseId": id, "params": params}))?);
+    let full = parse(&browse(true, false, json!({"browseId": id, "params": params}))?);
     Ok(if full.is_empty() { short } else { full })
 }
 
 fn fetch_channel(id: &str) -> Result<YtLinkContent, String> {
-    let json = browse(true, json!({"browseId": id}))?;
+    let json = browse(true, true, json!({"browseId": id}))?;
     // un canal común puede traer carrusel de "Vídeos" sin nada que importar: va por la web
     let artist = parse_artist(&json).filter(|p| !(p.albums.is_empty() && p.singles.is_empty() && p.playlists.is_empty()));
     let (title, playlists, albums) = if let Some(p) = artist {
@@ -380,13 +395,13 @@ fn fetch_channel(id: &str) -> Result<YtLinkContent, String> {
         albums.extend(grid(p.singles_more, p.singles, |j| parse_album_grid(j, &name))?);
         (p.name.clone(), grid(p.playlists_more, p.playlists, |j| parse_playlist_grid(j, &name))?, albums)
     } else {
-        let web = browse(false, json!({"browseId": id, "params": WEB_PLAYLISTS_TAB}))?;
+        let web = browse(false, true, json!({"browseId": id, "params": WEB_PLAYLISTS_TAB}))?;
         let title = collect(&web, "channelMetadataRenderer").first().map(|m| m["title"].as_str().unwrap_or_default().to_string()).unwrap_or_default();
         let first = |j: &Value| parse_web_playlists(j, &title);
         let (mut lists, mut next) = first(&web);
         for _ in 1..MAX_PAGES {
             let Some(t) = next else { break };
-            let (more, n) = first(&browse(false, json!({"continuation": t}))?);
+            let (more, n) = first(&browse(false, false, json!({"continuation": t}))?);
             lists.extend(more);
             next = n;
         }
@@ -402,14 +417,14 @@ fn fetch_channel(id: &str) -> Result<YtLinkContent, String> {
 pub fn fetch_link(url: &str) -> Result<YtLinkContent, String> {
     match parse_link(url).ok_or("Link de YouTube no válido")? {
         YtLink::Playlist(id) => {
-            let json = browse(true, json!({"browseId": format!("VL{id}")}))?;
+            let json = browse(true, true, json!({"browseId": format!("VL{id}")}))?;
             let p = parse_playlist_header(&json, &id).ok_or(NOT_FOUND)?;
             Ok(YtLinkContent { title: p.name.clone(), summary: format!("playlist · {} temas", p.num_tracks), playlists: vec![p], albums: vec![] })
         }
         YtLink::Channel(id) => fetch_channel(&id),
         YtLink::Handle(h) => {
             let body = json!({"url": format!("https://www.youtube.com/@{h}"), "context": {"client": {"clientName": "WEB", "clientVersion": "2.20251110.00.00", "hl": "es", "gl": "AR"}}});
-            let id = parse_resolve(&post("https://www.youtube.com", "navigation/resolve_url?prettyPrint=false", &body)?).ok_or(NOT_FOUND)?;
+            let id = parse_resolve(&post("https://www.youtube.com", "navigation/resolve_url?prettyPrint=false", true, &body)?).ok_or(NOT_FOUND)?;
             fetch_channel(&id)
         }
     }
@@ -427,7 +442,8 @@ pub fn merge_contents(contents: Vec<YtLinkContent>) -> YtLibrary {
 
 /// Si un link falla, error (nada parcial).
 pub fn fetch_links(urls: &[String]) -> Result<YtLibrary, String> {
-    Ok(merge_contents(urls.iter().map(|u| fetch_link(u)).collect::<Result<_, _>>()?))
+    let contents = urls.iter().map(|u| fetch_link(u).map_err(|e| format!("{u}: {e}"))).collect::<Result<_, _>>()?;
+    Ok(merge_contents(contents))
 }
 
 pub fn links() -> Vec<String> {
@@ -473,6 +489,11 @@ mod tests {
                   "https://m.youtube.com/watch?v=abc&list=PLD4WCKZfeUfs"] { assert_eq!(parse_link(i), pl, "{i}"); }
         assert_eq!(parse_link("https://www.youtube.com/@LofiGirl"), Some(YtLink::Handle("LofiGirl".into())));
         assert_eq!(parse_link("https://music.youtube.com/channel/UCIaFw5VBEK8qaW6nRpx_qnw"), Some(YtLink::Channel("UCIaFw5VBEK8qaW6nRpx_qnw".into())));
+        for i in ["https://www.youtube.com/playlist?list=RDCLAK5uy_abc", "https://www.youtube.com/playlist?list=WL", "https://www.youtube.com/playlist?list=LL", "https://www.youtube.com/watch?v=abc&list=RDabc"] {
+            assert_eq!(parse_link(i), None, "{i}");
+            assert!(is_mix_or_private(i), "{i}");
+        }
+        assert!(!is_mix_or_private("hola") && !is_mix_or_private("https://www.youtube.com/@LofiGirl"));
         for i in ["", "https://open.spotify.com/playlist/x", "https://www.youtube.com/watch?v=abc", "hola"] { assert_eq!(parse_link(i), None, "{i}"); }
         assert_eq!(link_url(&pl.unwrap()), "https://www.youtube.com/playlist?list=PLD4WCKZfeUfs");
     }

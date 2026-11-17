@@ -74,7 +74,8 @@ impl Album {
             let Some(id) = self.id.as_deref() else { return };
             let loaded = match self.source {
                 Source::YouTube => crate::external::yt_library::fetch_album_tracks(id),
-                _ => crate::external::sc_library::fetch_playlist_tracks(id),
+                Source::SoundCloud => crate::external::sc_library::fetch_playlist_tracks(id),
+                Source::Spotify => unreachable!("Spotify se carga por su API"),
             };
             match loaded {
                 Ok(tracks) => {

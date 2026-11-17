@@ -11,6 +11,7 @@ use crate::model::playlist::Playlist;
 use crate::queue::Queue;
 use crate::traits::ViewExt;
 use crate::ui::library::mixed_list;
+use crate::model::track::Source;
 use crate::ui::modal::Modal;
 use crate::ui::source_filter::FilteredList;
 
@@ -22,7 +23,7 @@ pub struct PlaylistsView {
 impl PlaylistsView {
     pub fn new(queue: Arc<Queue>, library: Arc<Library>) -> Self {
         let list = mixed_list(queue, library.clone(), library.playlists.clone(),
-            vec![library.yt_playlists.clone(), library.sc_playlists.clone()]);
+            vec![(Source::YouTube, library.yt_playlists.clone()), (Source::SoundCloud, library.sc_playlists.clone())]);
         Self { list, library }
     }
 

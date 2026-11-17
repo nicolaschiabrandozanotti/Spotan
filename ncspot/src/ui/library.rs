@@ -46,13 +46,18 @@ fn show_spotify_directly(active: &[Source]) -> bool {
     active.iter().all(|s| *s == Source::Spotify)
 }
 
+/// Servicios de una pestaña: Spotify (si hay sesión) y los activos que tienen datos en ella.
+fn tab_sources(active: Vec<Source>, nonempty: &[Source]) -> Vec<Source> {
+    active.into_iter().filter(|s| *s == Source::Spotify || nonempty.contains(s)).collect()
+}
+
 /// Lista de la biblioteca con Spotify y los demás servicios mezclados. Se recalcula al cambiar el
 /// filtro o `library.generation()`; sin otros servicios activos no hay copia.
 pub fn mixed_list<T: ListItem + Sourced + Clone>(
     queue: Arc<Queue>,
     library: Arc<Library>,
     spotify: Arc<RwLock<Vec<T>>>,
-    others: Vec<Arc<RwLock<Vec<T>>>>,
+    others: Vec<(Source, Arc<RwLock<Vec<T>>>)>,
 ) -> FilteredList<T> {
     let shown = Arc::new(RwLock::new(Vec::new()));
     let recompute: Arc<dyn Fn(&HashSet<Source>) + Send + Sync> = {
@@ -60,13 +65,20 @@ pub fn mixed_list<T: ListItem + Sourced + Clone>(
         Arc::new(move |on| {
             // cada almacén tiene un solo servicio: el orden se conserva al concatenar
             let mut v = merge_and_filter(&spotify.read().unwrap(), on);
-            for o in &others {
+            for (_, o) in &others {
                 v.extend(merge_and_filter(&o.read().unwrap(), on));
             }
             *shown.write().unwrap() = v;
         })
     };
-    let active = library_sources(&library);
+    let tab_active = {
+        let (library, others) = (library.clone(), others.clone());
+        move || {
+            let nonempty: Vec<Source> = others.iter().filter(|(_, o)| !o.read().unwrap().is_empty()).map(|(s, _)| *s).collect();
+            tab_sources(library_sources(&library), &nonempty)
+        }
+    };
+    let active = tab_active();
     let bar = new_bar(active.clone(), &recompute);
     let content = if show_spotify_directly(&active) {
         spotify.clone()
@@ -83,7 +95,7 @@ pub fn mixed_list<T: ListItem + Sourced + Clone>(
         if should_recompute(generation != seen, loading, last.elapsed()) {
             seen = generation;
             last = Instant::now();
-            let active = library_sources(&library);
+            let active = tab_active();
             if active != bar.active() {
                 *bar = new_bar(active.clone(), &recompute);
             }
@@ -130,11 +142,11 @@ impl LibraryView {
             match tab {
                 LibraryTab::Tracks => tabview.add_tab(
                     "Tracks",
-                    mixed_list(queue.clone(), library.clone(), library.tracks.clone(), vec![library.sc_tracks.clone()]),
+                    mixed_list(queue.clone(), library.clone(), library.tracks.clone(), vec![(Source::SoundCloud, library.sc_tracks.clone())]),
                 ),
                 LibraryTab::Albums => tabview.add_tab(
                     "Albums",
-                    mixed_list(queue.clone(), library.clone(), library.albums.clone(), vec![library.yt_albums.clone(), library.sc_albums.clone()]),
+                    mixed_list(queue.clone(), library.clone(), library.albums.clone(), vec![(Source::YouTube, library.yt_albums.clone()), (Source::SoundCloud, library.sc_albums.clone())]),
                 ),
                 LibraryTab::Artists => tabview.add_tab(
                     "Artists",
@@ -200,6 +212,16 @@ mod tests {
         assert!(!show_spotify_directly(&[Source::SoundCloud]));
         assert!(!show_spotify_directly(&[Source::YouTube]));
         assert!(!show_spotify_directly(&[Source::Spotify, Source::SoundCloud]));
+    }
+
+    #[test]
+    fn tab_sources_only_with_data_in_that_tab() {
+        let all = vec![Source::Spotify, Source::YouTube, Source::SoundCloud];
+        // Temas: YouTube activo pero sin temas propios
+        assert_eq!(tab_sources(all.clone(), &[Source::SoundCloud]), [Source::Spotify, Source::SoundCloud]);
+        assert_eq!(tab_sources(all.clone(), &[]), [Source::Spotify]);
+        assert_eq!(tab_sources(all, &[Source::SoundCloud, Source::YouTube]).len(), 3);
+        assert_eq!(tab_sources(vec![Source::YouTube], &[]), []);
     }
 
     #[test]

@@ -106,13 +106,34 @@ fn set_yt_enabled(s: &mut Cursive, on: bool) {
     }
 }
 
+/// Por qué no se pudo agregar un link; la UI pone el prefijo `Error:` solo a los fallos.
+#[derive(Debug, PartialEq)]
+enum LinkError {
+    Duplicate,
+    Failed(String),
+}
+
+impl LinkError {
+    fn text(&self) -> String {
+        match self {
+            Self::Duplicate => "Ya está agregado".into(),
+            Self::Failed(e) => format!("Error: {e}"),
+        }
+    }
+}
+
 /// Links resultantes de sumar `input` a `current`, con el link canónico al final.
-fn add_link(current: &[String], input: &str) -> Result<Vec<String>, String> {
-    let link = yt_library::parse_link(input)
-        .map(|l| yt_library::link_url(&l))
-        .ok_or("Error: Eso no parece un link de playlist o canal de YouTube")?;
+fn add_link(current: &[String], input: &str) -> Result<Vec<String>, LinkError> {
+    let Some(parsed) = yt_library::parse_link(input) else {
+        return Err(LinkError::Failed(if yt_library::is_mix_or_private(input) {
+            "Ese link es un mix o una lista privada; pegá una playlist pública".into()
+        } else {
+            "Eso no parece un link de playlist o canal de YouTube".into()
+        }));
+    };
+    let link = yt_library::link_url(&parsed);
     if current.contains(&link) {
-        return Err("Ya está agregado".into());
+        return Err(LinkError::Duplicate);
     }
     Ok(current.iter().cloned().chain([link]).collect())
 }
@@ -161,7 +182,7 @@ fn add_yt_link(s: &mut Cursive, on_change: Arc<dyn Fn(LibraryChange) + Send + Sy
     let input = s.call_on_name(YT_LINK, |v: &mut EditView| v.get_content()).unwrap_or_default();
     let updated = match add_link(&yt_library::links(), &input) {
         Ok(u) => u,
-        Err(e) => return set_text(s, YT_STATUS, e),
+        Err(e) => return set_text(s, YT_STATUS, e.text()),
     };
     let link = updated.last().cloned().unwrap_or_default();
     set_text(s, YT_STATUS, format!("Cargando{}", crate::utils::glyph("…", "...")));
@@ -173,8 +194,8 @@ fn add_yt_link(s: &mut Cursive, on_change: Arc<dyn Fn(LibraryChange) + Send + Sy
             let still_on = crate::external::enabled().contains(&Source::YouTube);
             s.call_on_name(BTN_YT_ADD, |b: &mut Button| b.set_enabled(still_on));
             // Solo se guarda un link que cargó; se relee la lista por si cambió mientras tanto.
-            let saved = result.and_then(|c| {
-                yt_library::set_links(&add_link(&yt_library::links(), &link)?)?;
+            let saved = result.map_err(LinkError::Failed).and_then(|c| {
+                yt_library::set_links(&add_link(&yt_library::links(), &link)?).map_err(LinkError::Failed)?;
                 Ok(c)
             });
             match saved {
@@ -187,7 +208,7 @@ fn add_yt_link(s: &mut Cursive, on_change: Arc<dyn Fn(LibraryChange) + Send + Sy
                         on_change(LibraryChange::YtLinksChanged);
                     }
                 }
-                Err(e) => set_text(s, YT_STATUS, if e.starts_with("Error") { e } else { format!("Error: {e}") }),
+                Err(e) => set_text(s, YT_STATUS, e.text()),
             }
         }));
     });
@@ -699,11 +720,16 @@ mod tests {
         assert_eq!(add_link(&[], "youtube.com/@coldplay"), Ok(vec![a.clone()]));
         let pl = "https://www.youtube.com/playlist?list=PLabc123";
         assert_eq!(add_link(&[a.clone()], pl), Ok(vec![a.clone(), pl.to_string()]));
-        assert_eq!(add_link(&[a.clone()], "https://www.youtube.com/@coldplay"), Err("Ya está agregado".into()));
+        assert_eq!(add_link(&[a.clone()], "https://www.youtube.com/@coldplay"), Err(LinkError::Duplicate));
         assert_eq!(
             add_link(&[], "hola"),
-            Err("Error: Eso no parece un link de playlist o canal de YouTube".into())
+            Err(LinkError::Failed("Eso no parece un link de playlist o canal de YouTube".into()))
         );
+        assert_eq!(
+            add_link(&[], "https://www.youtube.com/playlist?list=RDabc"),
+            Err(LinkError::Failed("Ese link es un mix o una lista privada; pegá una playlist pública".into()))
+        );
+        assert_eq!(LinkError::Duplicate.text(), "Ya está agregado");
     }
 
     #[test]

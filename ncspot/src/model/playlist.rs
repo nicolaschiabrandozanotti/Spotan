@@ -52,7 +52,8 @@ impl Playlist {
         self.tracks = if self.source != Source::Spotify {
             match self.source {
                 Source::YouTube => crate::external::yt_library::fetch_playlist_tracks(&self.id),
-                _ => crate::external::sc_library::fetch_playlist_tracks(&self.id),
+                Source::SoundCloud => crate::external::sc_library::fetch_playlist_tracks(&self.id),
+                Source::Spotify => unreachable!("Spotify se carga por su API"),
             }
                 .map(|t| t.into_iter().map(Playable::Track).collect())
                 .map_err(|e| warn!("Failed to load the tracks of playlist {}: {e}", self.name))
@@ -217,6 +218,14 @@ impl From<&FullPlaylist> for Playlist {
     }
 }
 
+/// Sin cantidad conocida (aún no se bajaron los temas) va solo la etiqueta, no «0 tracks».
+fn read_only_right(source: Source, num_tracks: usize) -> String {
+    match num_tracks {
+        0 => format!("[{}]", source.label()),
+        n => format!("[{}] {n:>4} tracks", source.label()),
+    }
+}
+
 impl ListItem for Playlist {
     fn is_playing(&self, queue: &Queue) -> bool {
         if let Some(tracks) = self.tracks.as_ref() {
@@ -245,7 +254,7 @@ impl ListItem for Playlist {
     fn display_right(&self, library: &Library) -> String {
         if self.is_read_only() {
             let num_tracks = self.tracks.as_ref().map_or(self.num_tracks, |t| t.len());
-            return format!("[{}] {num_tracks:>4} tracks", self.source.label());
+            return read_only_right(self.source, num_tracks);
         }
         let saved = if library.is_saved_playlist(self) {
             if library.cfg.values().use_nerdfont.unwrap_or(false) {
@@ -410,5 +419,16 @@ impl ListItem for Playlist {
 
     fn as_listitem(&self) -> Box<dyn ListItem> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_only_right_hides_unknown_count() {
+        assert_eq!(read_only_right(Source::YouTube, 0), "[YT]");
+        assert_eq!(read_only_right(Source::YouTube, 198), format!("[YT]  198 tracks"));
     }
 }
