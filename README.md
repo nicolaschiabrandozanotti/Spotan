@@ -84,7 +84,7 @@ Vienen **apagados**. Para usarlos:
 Con SoundCloud marcado, en **Ajustes** (`F4`), bajo *Otros servicios*, pegá el link de tu perfil en **Perfil:** (`Ctrl+V` o clic derecho) y tocá **Cargar**. Debajo aparece un resumen, por ejemplo `Forss · 288 Likes · 4 playlists`. **Quitar** la borra.
 
 - Carga tus *Likes*, tus playlists y las playlists que guardaste, todo público y sin iniciar sesión. Lo privado no se ve.
-- En **Biblioteca** (`F3`), las pestañas *Temas* y *Listas* mezclan Spotify y SoundCloud (`[S]` / `[SC]`), con la barra `[1 Spotify] [2 SoundCloud]` para filtrar (teclas `1` y `2`).
+- En **Biblioteca** (`F3`), las pestañas *Temas*, *Listas* y *Álbumes* mezclan Spotify y SoundCloud (`[S]` / `[SC]`), con la barra `[1 Spotify] [2 SoundCloud]` para filtrar (teclas `1` y `2`). Los álbumes y EPs de SoundCloud van en *Álbumes* (no en *Listas*) y se abren y reproducen como cualquier álbum; sin Spotify, esa pestaña muestra los de SoundCloud.
 - Se actualiza al abrir Spoti y con `Shift+U`. También anda sin Spotify (*Entrar sin Spotify* + perfil).
 - Es **solo lectura**: no podés borrar ni dar me gusta a nada de SoundCloud desde Spoti (`SoundCloud: solo lectura`).
 
