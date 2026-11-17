@@ -21,7 +21,8 @@ pub struct PlaylistsView {
 
 impl PlaylistsView {
     pub fn new(queue: Arc<Queue>, library: Arc<Library>) -> Self {
-        let list = mixed_list(queue, library.clone(), library.playlists.clone(), library.sc_playlists.clone());
+        let list = mixed_list(queue, library.clone(), library.playlists.clone(),
+            vec![library.yt_playlists.clone(), library.sc_playlists.clone()]);
         Self { list, library }
     }
 

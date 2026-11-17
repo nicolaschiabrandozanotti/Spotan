@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::config::{self, CACHE_VERSION};
 use crate::events::EventManager;
 use crate::external::sc_library::{self, ScLibrary, ScUser};
+use crate::external::yt_library::{self, YtLibrary};
 use crate::model::album::Album;
 use crate::model::artist::Artist;
 use crate::model::playable::Playable;
@@ -45,6 +46,18 @@ const CACHE_SC_PLAYLISTS: &str = "sc_playlists.db";
 /// Álbumes de SoundCloud en caché.
 const CACHE_SC_ALBUMS: &str = "sc_albums.db";
 
+/// Playlists de YouTube en caché.
+const CACHE_YT_PLAYLISTS: &str = "yt_playlists.db";
+
+/// Álbumes de YouTube en caché.
+const CACHE_YT_ALBUMS: &str = "yt_albums.db";
+
+/// Borra la caché en disco de YouTube (también sirve sin `Library`).
+pub fn remove_yt_cache() {
+    let _ = std::fs::remove_file(config::cache_path(CACHE_YT_PLAYLISTS));
+    let _ = std::fs::remove_file(config::cache_path(CACHE_YT_ALBUMS));
+}
+
 /// Borra la caché en disco de SoundCloud (también sirve sin `Library`, en la pantalla de inicio).
 pub fn remove_sc_cache() {
     let _ = std::fs::remove_file(config::cache_path(CACHE_SC_TRACKS));
@@ -67,6 +80,8 @@ pub struct Library {
     pub sc_tracks: Arc<RwLock<Vec<Track>>>,
     pub sc_playlists: Arc<RwLock<Vec<Playlist>>>,
     pub sc_albums: Arc<RwLock<Vec<Album>>>,
+    pub yt_playlists: Arc<RwLock<Vec<Playlist>>>,
+    pub yt_albums: Arc<RwLock<Vec<Album>>>,
     /// Sube con cada cambio de las listas; las vistas mezcladas lo comparan para recalcular.
     generation: Arc<AtomicU64>,
     /// Hay perfil de SoundCloud; en memoria para no leer el archivo en cada dibujo.
@@ -74,6 +89,10 @@ pub struct Library {
     sc_status: Arc<RwLock<Option<Result<ScUser, String>>>>,
     /// Perfil cuya descarga está en curso (evita descargas completas en paralelo).
     sc_inflight: Arc<Mutex<Option<String>>>,
+    /// Hay links de YouTube; en memoria para no leer el archivo en cada dibujo.
+    yt_links_set: Arc<AtomicBool>,
+    /// Links cuya descarga está en curso (evita descargas completas en paralelo).
+    yt_inflight: Arc<Mutex<Option<Vec<String>>>>,
     ev: EventManager,
     spotify: Spotify,
     pub cfg: Arc<Config>,
@@ -95,10 +114,14 @@ impl Library {
             sc_tracks: Arc::new(RwLock::new(Vec::new())),
             sc_playlists: Arc::new(RwLock::new(Vec::new())),
             sc_albums: Arc::new(RwLock::new(Vec::new())),
+            yt_playlists: Arc::new(RwLock::new(Vec::new())),
+            yt_albums: Arc::new(RwLock::new(Vec::new())),
             generation: Arc::new(AtomicU64::new(0)),
             sc_profile_set: Arc::new(AtomicBool::new(false)),
             sc_status: Arc::new(RwLock::new(None)),
             sc_inflight: Arc::new(Mutex::new(None)),
+            yt_links_set: Arc::new(AtomicBool::new(false)),
+            yt_inflight: Arc::new(Mutex::new(None)),
             ev,
             spotify,
             cfg,
@@ -146,10 +169,14 @@ impl Library {
             sc_tracks: Arc::new(RwLock::new(Vec::new())),
             sc_playlists: Arc::new(RwLock::new(Vec::new())),
             sc_albums: Arc::new(RwLock::new(Vec::new())),
+            yt_playlists: Arc::new(RwLock::new(Vec::new())),
+            yt_albums: Arc::new(RwLock::new(Vec::new())),
             generation: Arc::new(AtomicU64::new(0)),
             sc_profile_set: Arc::new(AtomicBool::new(sc_library::profile().is_some())),
             sc_status: Arc::new(RwLock::new(None)),
             sc_inflight: Arc::new(Mutex::new(None)),
+            yt_links_set: Arc::new(AtomicBool::new(!yt_library::links().is_empty())),
+            yt_inflight: Arc::new(Mutex::new(None)),
             ev,
             spotify,
             cfg,
@@ -163,6 +190,9 @@ impl Library {
             // con Spotify en línea, update_library ya lanzó la de SoundCloud
             if library.sc_active() {
                 library.update_soundcloud();
+            }
+            if library.yt_active() {
+                library.update_youtube();
             }
         }
         library
@@ -181,6 +211,12 @@ impl Library {
     pub fn sc_active(&self) -> bool {
         crate::external::enabled().contains(&Source::SoundCloud)
             && self.sc_profile_set.load(Ordering::SeqCst)
+    }
+
+    /// YouTube está prendido y hay links cargados.
+    pub fn yt_active(&self) -> bool {
+        crate::external::enabled().contains(&Source::YouTube)
+            && self.yt_links_set.load(Ordering::SeqCst)
     }
 
     pub fn sc_status(&self) -> Arc<RwLock<Option<Result<ScUser, String>>>> {
@@ -272,6 +308,96 @@ impl Library {
             drop(inflight);
             library.trigger_redraw();
         });
+    }
+
+    /// Reemplaza las listas de YouTube solo si todo bajó bien; si no, queda lo anterior.
+    /// Un resultado de links que ya no son los actuales se descarta.
+    fn apply_yt_result(&self, links: &[String], result: Result<YtLibrary, String>) {
+        if yt_library::links() != links {
+            return;
+        }
+        match result {
+            Ok(data) => {
+                *self.yt_playlists.write().unwrap() = data.playlists;
+                *self.yt_albums.write().unwrap() = data.albums;
+                self.save_cache(
+                    &config::cache_path(CACHE_YT_PLAYLISTS),
+                    &self.yt_playlists.read().unwrap(),
+                );
+                self.save_cache(
+                    &config::cache_path(CACHE_YT_ALBUMS),
+                    &self.yt_albums.read().unwrap(),
+                );
+                self.bump_generation();
+            }
+            Err(e) => warn!("YouTube: no se pudo actualizar la biblioteca: {e}"),
+        }
+    }
+
+    /// Carga la caché y baja la biblioteca de YouTube en su propio hilo.
+    pub fn update_youtube(&self) {
+        let links = yt_library::links();
+        if links.is_empty() {
+            return;
+        }
+        self.yt_links_set.store(true, Ordering::SeqCst);
+        {
+            let mut inflight = self.yt_inflight.lock().unwrap();
+            if inflight.as_ref() == Some(&links) {
+                return;
+            }
+            *inflight = Some(links.clone());
+        }
+        let library = self.clone();
+        thread::spawn(move || {
+            if library.yt_playlists.read().unwrap().is_empty() {
+                library.load_cache(
+                    &config::cache_path(CACHE_YT_PLAYLISTS),
+                    library.yt_playlists.write().unwrap().as_mut(),
+                );
+            }
+            if library.yt_albums.read().unwrap().is_empty() {
+                library.load_cache(
+                    &config::cache_path(CACHE_YT_ALBUMS),
+                    library.yt_albums.write().unwrap().as_mut(),
+                );
+            }
+            let result = yt_library::fetch_links(&links);
+            // si los links cambiaron mientras bajaba, este resultado ya no corresponde
+            if yt_library::links() == links {
+                if let Err(e) = &result {
+                    library
+                        .ev
+                        .notify(format!("YouTube: no se pudo actualizar la biblioteca ({e})"));
+                }
+                library.apply_yt_result(&links, result);
+            }
+            let mut inflight = library.yt_inflight.lock().unwrap();
+            if inflight.as_ref() == Some(&links) {
+                *inflight = None;
+            }
+            drop(inflight);
+            library.trigger_redraw();
+        });
+    }
+
+    /// Se prendió o apagó YouTube en Ajustes: las vistas se recalculan (la caché queda).
+    pub fn yt_visibility_changed(&self) {
+        self.yt_links_set
+            .store(!yt_library::links().is_empty(), Ordering::SeqCst);
+        self.bump_generation();
+        if crate::external::enabled().contains(&Source::YouTube) {
+            self.update_youtube();
+        }
+    }
+
+    /// Vacía lo de YouTube y borra su caché (al quitar los links).
+    pub fn clear_youtube(&self) {
+        self.yt_playlists.write().unwrap().clear();
+        self.yt_albums.write().unwrap().clear();
+        self.yt_links_set.store(false, Ordering::SeqCst);
+        remove_yt_cache();
+        self.bump_generation();
     }
 
     /// Se prendió o apagó SoundCloud en Ajustes: las vistas se recalculan (la caché queda).
@@ -437,6 +563,9 @@ impl Library {
     pub fn update_library(&self, refetch_unchanged: bool) {
         if self.sc_active() {
             self.update_soundcloud();
+        }
+        if self.yt_active() {
+            self.update_youtube();
         }
         self.update_spotify_library(refetch_unchanged);
     }
@@ -1598,6 +1727,87 @@ mod tests {
         assert!(lib.sc_active());
         lib.clear_soundcloud();
         assert!(!lib.sc_active());
+    }
+
+    const YT_LINK: &str = "https://www.youtube.com/playlist?list=PLabc";
+
+    fn yt_playlist(id: &str) -> Playlist {
+        Playlist {
+            id: id.to_string(),
+            source: Source::YouTube,
+            ..playlist("", 0, None)
+        }
+    }
+
+    fn yt_album(id: &str) -> Album {
+        Album::new_external(Source::YouTube, id.into(), id.into(), None, "".into(), None, None, 1)
+    }
+
+    fn yt_lib() -> YtLibrary {
+        YtLibrary { playlists: vec![yt_playlist("p")], albums: vec![yt_album("a")] }
+    }
+
+    fn yt_test_library() -> (Arc<Library>, Vec<String>) {
+        let links = vec![YT_LINK.to_string()];
+        yt_library::set_links(&links).unwrap();
+        (test_library(), links)
+    }
+
+    #[test]
+    fn yt_result_applied_cached_and_cleared() {
+        let (_g, _d) = crate::config::test_sandbox();
+        let (lib, links) = yt_test_library();
+        let g = lib.generation();
+        lib.apply_yt_result(&links, Ok(yt_lib()));
+        assert_eq!(lib.yt_playlists.read().unwrap().len(), 1);
+        assert_eq!(lib.yt_albums.read().unwrap().len(), 1);
+        assert!(config::cache_path(CACHE_YT_PLAYLISTS).exists());
+        assert!(config::cache_path(CACHE_YT_ALBUMS).exists());
+        assert!(lib.generation() > g);
+        lib.clear_youtube();
+        assert!(lib.yt_playlists.read().unwrap().is_empty());
+        assert!(lib.yt_albums.read().unwrap().is_empty());
+        assert!(!config::cache_path(CACHE_YT_PLAYLISTS).exists());
+        assert!(!config::cache_path(CACHE_YT_ALBUMS).exists());
+    }
+
+    #[test]
+    fn yt_failed_update_keeps_previous() {
+        let (_g, _d) = crate::config::test_sandbox();
+        let (lib, links) = yt_test_library();
+        lib.apply_yt_result(&links, Ok(yt_lib()));
+        let g = lib.generation();
+        lib.apply_yt_result(&links, Err("red".into()));
+        assert_eq!(lib.yt_playlists.read().unwrap().len(), 1);
+        assert_eq!(lib.yt_albums.read().unwrap().len(), 1);
+        assert_eq!(lib.generation(), g);
+    }
+
+    #[test]
+    fn yt_stale_result_is_dropped() {
+        let (_g, _d) = crate::config::test_sandbox();
+        let (lib, links) = yt_test_library();
+        let g = lib.generation();
+        // links cambiados mientras bajaba
+        yt_library::set_links(&["https://www.youtube.com/playlist?list=PLotra".to_string()]).unwrap();
+        lib.apply_yt_result(&links, Ok(yt_lib()));
+        assert!(lib.yt_playlists.read().unwrap().is_empty());
+        assert!(lib.yt_albums.read().unwrap().is_empty());
+        assert!(!config::cache_path(CACHE_YT_PLAYLISTS).exists());
+        assert_eq!(lib.generation(), g);
+    }
+
+    #[test]
+    fn yt_active_needs_service_and_links() {
+        let (_g, _d) = crate::config::test_sandbox();
+        let (lib, _links) = yt_test_library();
+        crate::external::set_enabled(Source::YouTube, false).unwrap();
+        lib.yt_links_set.store(true, Ordering::SeqCst);
+        assert!(!lib.yt_active());
+        crate::external::set_enabled(Source::YouTube, true).unwrap();
+        assert!(lib.yt_active());
+        lib.clear_youtube();
+        assert!(!lib.yt_active());
     }
 
     #[test]

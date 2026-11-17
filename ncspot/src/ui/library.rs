@@ -21,7 +21,7 @@ use std::collections::HashSet;
 use crate::model::track::Source;
 
 const OFFLINE_HINT: &str = "Iniciá sesión con Spotify en Ajustes (F4) para ver tu biblioteca";
-const NO_SOURCE_HINT: &str = "Iniciá sesión con Spotify o cargá tu perfil de SoundCloud en Ajustes (F4)";
+const NO_SOURCE_HINT: &str = "Iniciá sesión con Spotify o configurá SoundCloud o YouTube en Ajustes (F4)";
 
 fn new_bar(active: Vec<Source>, recompute: &Arc<dyn Fn(&HashSet<Source>) + Send + Sync>) -> SourceFilter {
     let mut bar = SourceFilter::new(active);
@@ -31,8 +31,8 @@ fn new_bar(active: Vec<Source>, recompute: &Arc<dyn Fn(&HashSet<Source>) + Send 
 }
 
 /// Aviso de sesión según el nombre interno de la pestaña (no el traducido).
-fn hint_for(online: bool, sc_active: bool, tab: &str) -> Option<&'static str> {
-    if !online && !sc_active {
+fn hint_for(online: bool, external_active: bool, tab: &str) -> Option<&'static str> {
+    if !online && !external_active {
         Some(NO_SOURCE_HINT)
     } else if !online && !matches!(tab, "Tracks" | "Albums" | "Playlists") {
         Some(OFFLINE_HINT)
@@ -41,26 +41,28 @@ fn hint_for(online: bool, sc_active: bool, tab: &str) -> Option<&'static str> {
     }
 }
 
-/// Sin SoundCloud la lista muestra el `Arc` de Spotify tal cual, sin copia derivada (RAM).
+/// Sin otro servicio activo la lista muestra el `Arc` de Spotify tal cual, sin copia derivada (RAM).
 fn show_spotify_directly(active: &[Source]) -> bool {
-    !active.contains(&Source::SoundCloud)
+    active.iter().all(|s| *s == Source::Spotify)
 }
 
-/// Lista de la biblioteca con Spotify y SoundCloud mezclados. Se recalcula al cambiar el
-/// filtro o `library.generation()`; con SoundCloud inactivo no hay copia.
+/// Lista de la biblioteca con Spotify y los demás servicios mezclados. Se recalcula al cambiar el
+/// filtro o `library.generation()`; sin otros servicios activos no hay copia.
 pub fn mixed_list<T: ListItem + Sourced + Clone>(
     queue: Arc<Queue>,
     library: Arc<Library>,
     spotify: Arc<RwLock<Vec<T>>>,
-    sc: Arc<RwLock<Vec<T>>>,
+    others: Vec<Arc<RwLock<Vec<T>>>>,
 ) -> FilteredList<T> {
     let shown = Arc::new(RwLock::new(Vec::new()));
     let recompute: Arc<dyn Fn(&HashSet<Source>) + Send + Sync> = {
-        let (shown, spotify, sc) = (shown.clone(), spotify.clone(), sc.clone());
+        let (shown, spotify, others) = (shown.clone(), spotify.clone(), others.clone());
         Arc::new(move |on| {
             // cada almacén tiene un solo servicio: el orden se conserva al concatenar
             let mut v = merge_and_filter(&spotify.read().unwrap(), on);
-            v.extend(merge_and_filter(&sc.read().unwrap(), on));
+            for o in &others {
+                v.extend(merge_and_filter(&o.read().unwrap(), on));
+            }
             *shown.write().unwrap() = v;
         })
     };
@@ -128,11 +130,11 @@ impl LibraryView {
             match tab {
                 LibraryTab::Tracks => tabview.add_tab(
                     "Tracks",
-                    mixed_list(queue.clone(), library.clone(), library.tracks.clone(), library.sc_tracks.clone()),
+                    mixed_list(queue.clone(), library.clone(), library.tracks.clone(), vec![library.sc_tracks.clone()]),
                 ),
                 LibraryTab::Albums => tabview.add_tab(
                     "Albums",
-                    mixed_list(queue.clone(), library.clone(), library.albums.clone(), library.sc_albums.clone()),
+                    mixed_list(queue.clone(), library.clone(), library.albums.clone(), vec![library.yt_albums.clone(), library.sc_albums.clone()]),
                 ),
                 LibraryTab::Artists => tabview.add_tab(
                     "Artists",
@@ -166,7 +168,7 @@ impl ViewWrapper for LibraryView {
     fn wrap_draw(&self, printer: &cursive::Printer) {
         self.tabs.draw(printer);
         let online = self.library.is_online();
-        let hint = hint_for(online, !online && self.library.sc_active(), self.tabs.selected_name());
+        let hint = hint_for(online, !online && (self.library.sc_active() || self.library.yt_active()), self.tabs.selected_name());
         if let Some(hint) = hint {
             printer.print((1, 3), hint);
         }
@@ -196,6 +198,7 @@ mod tests {
         assert!(show_spotify_directly(&[]));
         assert!(show_spotify_directly(&[Source::Spotify]));
         assert!(!show_spotify_directly(&[Source::SoundCloud]));
+        assert!(!show_spotify_directly(&[Source::YouTube]));
         assert!(!show_spotify_directly(&[Source::Spotify, Source::SoundCloud]));
     }
 

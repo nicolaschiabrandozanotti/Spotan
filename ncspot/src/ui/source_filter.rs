@@ -39,11 +39,15 @@ impl Sourced for Playlist {
     }
 }
 
-/// Servicios con contenido en la biblioteca: Spotify con sesión, SoundCloud con perfil.
-pub fn library_sources_from(online: bool, sc_active: bool) -> Vec<Source> {
+/// Servicios con contenido en la biblioteca: Spotify con sesión, YouTube con links,
+/// SoundCloud con perfil.
+pub fn library_sources_from(online: bool, sc_active: bool, yt_active: bool) -> Vec<Source> {
     let mut v = Vec::new();
     if online {
         v.push(Source::Spotify);
+    }
+    if yt_active {
+        v.push(Source::YouTube);
     }
     if sc_active {
         v.push(Source::SoundCloud);
@@ -52,7 +56,7 @@ pub fn library_sources_from(online: bool, sc_active: bool) -> Vec<Source> {
 }
 
 pub fn library_sources(library: &Library) -> Vec<Source> {
-    library_sources_from(library.is_online(), library.sc_active())
+    library_sources_from(library.is_online(), library.sc_active(), library.yt_active())
 }
 
 /// Orden estable Spotify -> YouTube -> SoundCloud (cada uno en su orden); solo los `on`.
@@ -346,9 +350,14 @@ mod tests {
 
     #[test]
     fn library_sources_hides_sc_when_off() {
-        assert_eq!(library_sources_from(true, false), [Source::Spotify]);
-        assert_eq!(library_sources_from(true, true), [Source::Spotify, Source::SoundCloud]);
-        assert_eq!(library_sources_from(false, true), [Source::SoundCloud]);
-        assert!(!SourceFilter::new(library_sources_from(true, false)).visible());
+        assert_eq!(library_sources_from(true, false, false), [Source::Spotify]);
+        assert_eq!(library_sources_from(true, true, false), [Source::Spotify, Source::SoundCloud]);
+        assert_eq!(library_sources_from(false, true, false), [Source::SoundCloud]);
+        assert_eq!(library_sources_from(false, false, true), [Source::YouTube]);
+        assert_eq!(
+            library_sources_from(true, true, true),
+            [Source::Spotify, Source::YouTube, Source::SoundCloud]
+        );
+        assert!(!SourceFilter::new(library_sources_from(true, false, false)).visible());
     }
 }
