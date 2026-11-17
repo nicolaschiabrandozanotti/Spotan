@@ -13,6 +13,7 @@ use crate::application::UserData;
 use crate::authentication::{self, ApiSession};
 use crate::command::Command;
 use crate::external::sc_library::{self, ScUser};
+use crate::external::yt_library;
 use crate::model::track::Source;
 use crate::traits::ViewExt;
 use crate::ui::spoti_background::Background;
@@ -36,19 +37,28 @@ const SC_PROFILE: &str = "settings_sc_profile";
 const SC_STATUS: &str = "settings_sc_status";
 const BTN_SC_LOAD: &str = "settings_btn_sc_load";
 const BTN_SC_REMOVE: &str = "settings_btn_sc_remove";
+const YT_LINK: &str = "settings_yt_link";
+const YT_STATUS: &str = "settings_yt_status";
+const YT_LIST: &str = "settings_yt_list";
+const BTN_YT_ADD: &str = "settings_btn_yt_add";
+const BTN_YT_REMOVE: &str = "settings_btn_yt_remove_";
 
 /// Marker left in the start screen's user data by "Entrar sin Spotify".
 pub struct EnterWithoutSpotify;
 
-/// Cambio de SoundCloud que la aplicación debe reflejar en la biblioteca.
+/// Cambio de SoundCloud o YouTube que la aplicación debe reflejar en la biblioteca.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ScChange {
+pub enum LibraryChange {
     /// Se cargó un perfil: bajar su biblioteca.
-    Loaded,
+    ScLoaded,
     /// Se quitó el perfil: vaciar lo de SoundCloud y su caché.
-    Removed,
+    ScRemoved,
     /// Se prendió o apagó el servicio: recalcular las vistas.
-    Toggled,
+    ScToggled,
+    /// Cambió la lista de links de YouTube: volver a bajarla (o vaciarla si no quedan).
+    YtLinksChanged,
+    /// Se prendió o apagó YouTube: recalcular las vistas.
+    YtToggled,
 }
 
 /// "Entrar sin Spotify" needs at least one external service on.
@@ -57,7 +67,7 @@ pub fn can_enter_without_spotify(services: &[Source]) -> bool {
 }
 
 /// A service checkbox: toggling it saves right away and refreshes the enter button.
-fn service_checkbox(source: Source, label: &str, on_sc_change: Arc<dyn Fn(ScChange) + Send + Sync>) -> LinearLayout {
+fn service_checkbox(source: Source, label: &str, on_sc_change: Arc<dyn Fn(LibraryChange) + Send + Sync>) -> LinearLayout {
     let on = crate::external::enabled().contains(&source);
     LinearLayout::horizontal()
         .child(Checkbox::new().with_checked(on).on_change(move |s, on| {
@@ -69,7 +79,11 @@ fn service_checkbox(source: Source, label: &str, on_sc_change: Arc<dyn Fn(ScChan
             s.call_on_name(BTN_ENTER, |b: &mut Button| b.set_enabled(can));
             if source == Source::SoundCloud {
                 set_sc_enabled(s, on);
-                on_sc_change(ScChange::Toggled);
+                on_sc_change(LibraryChange::ScToggled);
+            }
+            if source == Source::YouTube {
+                set_yt_enabled(s, on);
+                on_sc_change(LibraryChange::YtToggled);
             }
         }))
         .child(TextView::new(format!(" {label}")))
@@ -83,6 +97,99 @@ fn set_sc_enabled(s: &mut Cursive, on: bool) {
     }
 }
 
+/// El campo de links y sus botones solo funcionan con YouTube prendido.
+fn set_yt_enabled(s: &mut Cursive, on: bool) {
+    s.call_on_name(YT_LINK, |v: &mut EditView| v.set_enabled(on));
+    s.call_on_name(BTN_YT_ADD, |b: &mut Button| b.set_enabled(on));
+    for i in 0..yt_library::links().len() {
+        s.call_on_name(&format!("{BTN_YT_REMOVE}{i}"), |b: &mut Button| b.set_enabled(on));
+    }
+}
+
+/// Links resultantes de sumar `input` a `current`, con el link canónico al final.
+fn add_link(current: &[String], input: &str) -> Result<Vec<String>, String> {
+    let link = yt_library::parse_link(input)
+        .map(|l| yt_library::link_url(&l))
+        .ok_or("Error: Eso no parece un link de playlist o canal de YouTube")?;
+    if current.contains(&link) {
+        return Err("Ya está agregado".into());
+    }
+    Ok(current.iter().cloned().chain([link]).collect())
+}
+
+/// Vuelve a dibujar la lista de links con un «Quitar» por fila.
+fn rebuild_yt_list(s: &mut Cursive, on_change: Arc<dyn Fn(LibraryChange) + Send + Sync>) {
+    s.call_on_name(YT_LIST, |l: &mut LinearLayout| {
+        l.clear();
+        fill_yt_list(l, on_change);
+    });
+}
+
+fn fill_yt_list(l: &mut LinearLayout, on_change: Arc<dyn Fn(LibraryChange) + Send + Sync>) {
+    let on = crate::external::enabled().contains(&Source::YouTube);
+    for (i, link) in yt_library::links().into_iter().enumerate() {
+        let cb = on_change.clone();
+        let mut remove = Button::new("Quitar", move |s| remove_yt_link(s, i, cb.clone()));
+        remove.set_enabled(on);
+        l.add_child(
+            LinearLayout::horizontal()
+                .child(TextView::new(format!("      {link} ")))
+                .child(remove.with_name(format!("{BTN_YT_REMOVE}{i}"))),
+        );
+    }
+}
+
+fn remove_yt_link(s: &mut Cursive, index: usize, on_change: Arc<dyn Fn(LibraryChange) + Send + Sync>) {
+    let mut links = yt_library::links();
+    if index >= links.len() {
+        return;
+    }
+    links.remove(index);
+    if let Err(e) = yt_library::set_links(&links) {
+        return set_text(s, YT_STATUS, format!("Error: {e}"));
+    }
+    if links.is_empty() {
+        // en la pantalla de inicio no hay Library que lo haga
+        crate::library::remove_yt_cache();
+    }
+    set_text(s, YT_STATUS, String::new());
+    rebuild_yt_list(s, on_change.clone());
+    on_change(LibraryChange::YtLinksChanged);
+}
+
+fn add_yt_link(s: &mut Cursive, on_change: Arc<dyn Fn(LibraryChange) + Send + Sync>) {
+    let input = s.call_on_name(YT_LINK, |v: &mut EditView| v.get_content()).unwrap_or_default();
+    let updated = match add_link(&yt_library::links(), &input) {
+        Ok(u) => u,
+        Err(e) => return set_text(s, YT_STATUS, e),
+    };
+    let link = updated.last().cloned().unwrap_or_default();
+    set_text(s, YT_STATUS, format!("Cargando{}", crate::utils::glyph("…", "...")));
+    s.call_on_name(BTN_YT_ADD, |b: &mut Button| b.set_enabled(false));
+    let sink = s.cb_sink().clone();
+    std::thread::spawn(move || {
+        let result = yt_library::fetch_link(&link);
+        let _ = sink.send(Box::new(move |s| {
+            let still_on = crate::external::enabled().contains(&Source::YouTube);
+            s.call_on_name(BTN_YT_ADD, |b: &mut Button| b.set_enabled(still_on));
+            // Solo se guarda un link que cargó; se relee la lista por si cambió mientras tanto.
+            let saved = result.and_then(|c| {
+                yt_library::set_links(&add_link(&yt_library::links(), &link)?)?;
+                Ok(c)
+            });
+            match saved {
+                Ok(c) => {
+                    s.call_on_name(YT_LINK, |v: &mut EditView| v.set_content(""));
+                    set_text(s, YT_STATUS, format!("{} ({})", c.title, c.summary));
+                    rebuild_yt_list(s, on_change.clone());
+                    on_change(LibraryChange::YtLinksChanged);
+                }
+                Err(e) => set_text(s, YT_STATUS, if e.starts_with("Error") { e } else { format!("Error: {e}") }),
+            }
+        }));
+    });
+}
+
 fn sc_status_text(r: &Result<ScUser, String>) -> String {
     match r {
         Ok(u) => format!("{} · {} Likes · {} playlists", u.username, u.likes, u.playlists),
@@ -90,7 +197,7 @@ fn sc_status_text(r: &Result<ScUser, String>) -> String {
     }
 }
 
-fn load_sc_profile(s: &mut Cursive, on_change: Arc<dyn Fn(ScChange) + Send + Sync>) {
+fn load_sc_profile(s: &mut Cursive, on_change: Arc<dyn Fn(LibraryChange) + Send + Sync>) {
     let input = s.call_on_name(SC_PROFILE, |v: &mut EditView| v.get_content()).unwrap_or_default();
     let Some(url) = sc_library::normalize_profile(&input) else {
         return set_text(s, SC_STATUS, "Error: Eso no parece un perfil de SoundCloud".into());
@@ -115,22 +222,22 @@ fn load_sc_profile(s: &mut Cursive, on_change: Arc<dyn Fn(ScChange) + Send + Syn
                 if previous.is_some_and(|p| p != url) {
                     // en la pantalla de inicio on_change no hace nada: la caché se borra acá
                     crate::library::remove_sc_cache();
-                    on_change(ScChange::Removed);
+                    on_change(LibraryChange::ScRemoved);
                 }
-                on_change(ScChange::Loaded);
+                on_change(LibraryChange::ScLoaded);
             }
         }));
     });
 }
 
-fn remove_sc_profile(s: &mut Cursive, on_change: &dyn Fn(ScChange)) {
+fn remove_sc_profile(s: &mut Cursive, on_change: &dyn Fn(LibraryChange)) {
     match sc_library::set_profile(None) {
         Ok(()) => {
             // en la pantalla de inicio no hay Library que lo haga
             crate::library::remove_sc_cache();
             s.call_on_name(SC_PROFILE, |v: &mut EditView| v.set_content(""));
             set_text(s, SC_STATUS, String::new());
-            on_change(ScChange::Removed);
+            on_change(LibraryChange::ScRemoved);
         }
         Err(e) => set_text(s, SC_STATUS, format!("Error: {e}")),
     }
@@ -272,9 +379,9 @@ impl SettingsView {
         mode: SettingsMode,
         account: Option<String>,
         on_logged_in: Box<dyn Fn(RespotCredentials) -> Result<(), String> + Send + Sync>,
-        on_sc_change: Box<dyn Fn(ScChange) + Send + Sync>,
+        on_sc_change: Box<dyn Fn(LibraryChange) + Send + Sync>,
     ) -> Self {
-        let on_sc_change: Arc<dyn Fn(ScChange) + Send + Sync> = Arc::from(on_sc_change);
+        let on_sc_change: Arc<dyn Fn(LibraryChange) + Send + Sync> = Arc::from(on_sc_change);
         let on_logged_in: Arc<dyn Fn(RespotCredentials) -> Result<(), String> + Send + Sync> = Arc::from(on_logged_in);
         let start = mode == SettingsMode::Start;
         let mut layout = LinearLayout::vertical()
@@ -336,9 +443,31 @@ impl SettingsView {
         layout.add_child(DummyView);
         layout.add_child(TextView::new(heading("Otros servicios")));
         layout.add_child(service_checkbox(Source::YouTube, "YouTube", on_sc_change.clone()));
+        let yt_on = crate::external::enabled().contains(&Source::YouTube);
+        let add_cb = on_sc_change.clone();
+        let mut add = Button::new("Agregar", move |s| add_yt_link(s, add_cb.clone()));
+        add.set_enabled(yt_on);
+        layout.add_child(
+            LinearLayout::horizontal()
+                .child(TextView::new("    Links: "))
+                .child(
+                    OnEventView::new(EditView::new().with_enabled(yt_on).with_name(YT_LINK))
+                        .on_pre_event_inner(EventTrigger::from_fn(is_paste), |v, _| paste_into(v))
+                        .max_width(CLIENT_ID_WIDTH),
+                )
+                .child(DummyView.fixed_width(1))
+                .child(add.with_name(BTN_YT_ADD)),
+        );
+        let mut list = LinearLayout::vertical();
+        fill_yt_list(&mut list, on_sc_change.clone());
+        layout.add_child(list.with_name(YT_LIST));
+        layout.add_child(TextView::new("").with_name(YT_STATUS));
+        layout.add_child(TextView::new(hint(
+            "    Pegá links de playlists o canales públicos. Ctrl+V o clic derecho para pegar.",
+        )));
         layout.add_child(service_checkbox(Source::SoundCloud, "SoundCloud", on_sc_change.clone()));
         let sc_on = crate::external::enabled().contains(&Source::SoundCloud);
-        let (load_cb, remove_cb) = (on_sc_change.clone(), on_sc_change);
+        let (load_cb, remove_cb) = (on_sc_change.clone(), on_sc_change.clone());
         let mut load = Button::new("Cargar", move |s| load_sc_profile(s, load_cb.clone()));
         let mut remove = Button::new("Quitar", move |s| remove_sc_profile(s, &*remove_cb));
         load.set_enabled(sc_on);
@@ -559,6 +688,19 @@ mod tests {
         let ok = Ok(ScUser { id: 183, username: "Forss".into(), likes: 288, playlists: 4 });
         assert_eq!(sc_status_text(&ok), "Forss · 288 Likes · 4 playlists");
         assert_eq!(sc_status_text(&Err("No existe".into())), "Error: No existe");
+    }
+
+    #[test]
+    fn add_link_validates_and_dedups() {
+        let a = "https://www.youtube.com/@coldplay".to_string();
+        assert_eq!(add_link(&[], "youtube.com/@coldplay"), Ok(vec![a.clone()]));
+        let pl = "https://www.youtube.com/playlist?list=PLabc123";
+        assert_eq!(add_link(&[a.clone()], pl), Ok(vec![a.clone(), pl.to_string()]));
+        assert_eq!(add_link(&[a.clone()], "https://www.youtube.com/@coldplay"), Err("Ya está agregado".into()));
+        assert_eq!(
+            add_link(&[], "hola"),
+            Err("Error: Eso no parece un link de playlist o canal de YouTube".into())
+        );
     }
 
     #[test]

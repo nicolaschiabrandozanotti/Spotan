@@ -14,6 +14,7 @@ use signal_hook::{consts::SIGHUP, consts::SIGTERM, iterator::Signals};
 use crate::command::Command;
 use crate::commands::CommandManager;
 use crate::config::{Config, PlaybackState};
+use crate::external;
 use crate::events::{Event, EventManager};
 use crate::library::Library;
 use crate::queue::Queue;
@@ -309,9 +310,14 @@ impl Application {
             Box::new({
                 let library = library.clone();
                 move |change| match change {
-                    ui::settings::ScChange::Loaded => library.update_soundcloud(),
-                    ui::settings::ScChange::Removed => library.clear_soundcloud(),
-                    ui::settings::ScChange::Toggled => library.sc_visibility_changed(),
+                    ui::settings::LibraryChange::ScLoaded => library.update_soundcloud(),
+                    ui::settings::LibraryChange::ScRemoved => library.clear_soundcloud(),
+                    ui::settings::LibraryChange::ScToggled => library.sc_visibility_changed(),
+                    ui::settings::LibraryChange::YtLinksChanged if external::yt_library::links().is_empty() => {
+                        library.clear_youtube()
+                    }
+                    ui::settings::LibraryChange::YtLinksChanged => library.update_youtube(),
+                    ui::settings::LibraryChange::YtToggled => library.yt_visibility_changed(),
                 }
             }),
         );
