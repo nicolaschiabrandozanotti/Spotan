@@ -75,15 +75,8 @@ type YtKey = (Vec<String>, Option<u64>);
 /// Temas, listas y álbumes ya juntos.
 type YtMerged = (Vec<Track>, Vec<Playlist>, Vec<Album>);
 
-fn fingerprint(cookie: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    cookie.hash(&mut h);
-    h.finish()
-}
-
 fn yt_key() -> YtKey {
-    (yt_library::links(), yt_library::session_cookie().as_deref().map(fingerprint))
+    (yt_library::links(), yt_library::session_cookie().as_deref().map(yt_library::fingerprint))
 }
 
 fn yt_has_source() -> bool {
@@ -128,11 +121,6 @@ fn merge_youtube(links: YtLibrary, session: Option<YtSessionLibrary>) -> YtMerge
     (tracks, playlists, albums)
 }
 
-/// La renovación solo puede guardar la cookie nueva si la sesión sigue siendo la de arranque.
-fn renewal_allowed(current: Option<&str>, started_with: Option<u64>) -> bool {
-    current.map(fingerprint) == started_with
-}
-
 /// Baja links y sesión; con la sesión vencida relee Firefox (si hay perfil) y reintenta una vez.
 /// Devuelve la clave del resultado (cambia si la renovación guardó una cookie nueva).
 fn fetch_youtube(links: &[String], cookie: Option<String>, key: YtKey) -> (YtKey, Result<YtMerged, SessionError>) {
@@ -151,20 +139,18 @@ fn fetch_youtube(links: &[String], cookie: Option<String>, key: YtKey) -> (YtKey
             RenewStep::GiveUp => return (key, Err(SessionError::Expired)),
             RenewStep::Retry => {
                 retried = true;
-                // el usuario pudo quitar o cambiar la sesión mientras bajaba
-                if !renewal_allowed(yt_library::session_cookie().as_deref(), key.1) {
-                    return (key, Err(SessionError::Expired));
-                }
                 let Some(profile) = yt_library::firefox_profile() else {
                     return (key, Err(SessionError::Expired));
                 };
                 match crate::external::firefox_cookies::read_profile(&profile) {
-                    Ok(Some(c)) if yt_library::set_session_cookie(Some(&c.header)).is_ok() => {
-                        key.1 = Some(fingerprint(&c.header));
+                    // el usuario pudo quitar o cambiar la sesión (o el permiso) durante la lectura lenta:
+                    // la comparación y la escritura son atómicas en `replace_session_if`
+                    Ok(Some(c)) if yt_library::firefox_profile().is_some() && yt_library::replace_session_if(key.1, &c.header, Some(&profile), false) => {
+                        key.1 = Some(yt_library::fingerprint(&c.header));
                         cookie = c.header;
                     }
                     Ok(Some(_)) => {
-                        debug!("YouTube: no se pudo guardar la sesión renovada");
+                        debug!("YouTube: no se guardó la sesión renovada");
                         return (key, Err(SessionError::Expired));
                     }
                     Ok(None) => {
@@ -472,7 +458,7 @@ impl Library {
             return;
         }
         self.yt_links_set.store(true, Ordering::SeqCst);
-        let key = (links.clone(), cookie.as_deref().map(fingerprint));
+        let key = (links.clone(), cookie.as_deref().map(yt_library::fingerprint));
         {
             let mut inflight = self.yt_inflight.lock().unwrap();
             if inflight.as_ref() == Some(&key) {
@@ -1985,13 +1971,6 @@ mod tests {
         yt_library::set_session_cookie(None).unwrap();
         lib.apply_yt_result(&key, Ok(yt_merged()));
         assert!(lib.yt_playlists.read().unwrap().is_empty());
-    }
-
-    #[test]
-    fn renewal_allowed_only_for_same_session() {
-        assert!(renewal_allowed(Some("a"), Some(fingerprint("a"))));
-        assert!(!renewal_allowed(Some("b"), Some(fingerprint("a"))));
-        assert!(!renewal_allowed(None, Some(fingerprint("a"))));
     }
 
     #[test]

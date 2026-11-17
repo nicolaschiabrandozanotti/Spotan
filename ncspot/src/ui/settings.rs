@@ -141,17 +141,8 @@ fn refresh_yt_session(s: &mut Cursive) {
     s.call_on_name(YTS_STATUS, |v: &mut TextView| v.set_content(session_status_line()));
 }
 
-/// Guarda la sesión (y de dónde salió) y avisa a la biblioteca si YouTube está prendido.
-fn save_yt_session(
-    s: &mut Cursive,
-    cookie: &str,
-    profile: Option<&std::path::Path>,
-    pasted: bool,
-    on_change: &dyn Fn(LibraryChange),
-) {
-    let saved = yt_library::set_session_cookie(Some(cookie))
-        .and_then(|()| yt_library::set_firefox_profile(profile))
-        .and_then(|()| yt_library::set_session_pasted(pasted));
+/// Muestra el resultado de guardar la sesión y avisa a la biblioteca si YouTube está prendido.
+fn finish_yt_session(s: &mut Cursive, saved: Result<(), String>, on_change: &dyn Fn(LibraryChange)) {
     refresh_yt_session(s);
     match saved {
         Ok(()) => {
@@ -169,6 +160,8 @@ fn take_from_firefox(s: &mut Cursive, renew: bool, on_change: Arc<dyn Fn(Library
     set_text(s, YT_STATUS, format!("Leyendo Firefox{}", crate::utils::glyph("…", "...")));
     s.call_on_name(YTS_BUTTONS[0], |b: &mut Button| b.set_enabled(false));
     let sink = s.cb_sink().clone();
+    // huella de la sesión al empezar: si cambia mientras se lee Firefox, no se pisa
+    let started = yt_library::session_cookie().as_deref().map(yt_library::fingerprint);
     std::thread::spawn(move || {
         let result = crate::external::firefox_cookies::find_session();
         let _ = sink.send(Box::new(move |s| {
@@ -176,7 +169,14 @@ fn take_from_firefox(s: &mut Cursive, renew: bool, on_change: Arc<dyn Fn(Library
             s.call_on_name(YTS_BUTTONS[0], |b: &mut Button| b.set_enabled(still_on));
             match result {
                 Ok((profile, c)) => {
-                    save_yt_session(s, &c.header, renew.then_some(profile.as_path()), false, &*on_change)
+                    match yt_library::try_replace_session_if(started, &c.header, renew.then_some(profile.as_path()), false) {
+                        Ok(true) => finish_yt_session(s, Ok(()), &*on_change),
+                        Ok(false) => {
+                            refresh_yt_session(s);
+                            set_text(s, YT_STATUS, "La sesión cambió mientras se leía Firefox; no se guardó nada".into());
+                        }
+                        Err(e) => finish_yt_session(s, Err(e), &*on_change),
+                    }
                 }
                 Err(e) => set_text(s, YT_STATUS, format!("Error: {e}")),
             }
@@ -220,7 +220,7 @@ fn ask_paste(s: &mut Cursive, on_change: Arc<dyn Fn(LibraryChange) + Send + Sync
             match yt_library::clean_pasted_cookie(&input) {
                 Ok(cookie) => {
                     s.pop_layer();
-                    save_yt_session(s, &cookie, None, true, &*on_change);
+                    finish_yt_session(s, yt_library::set_session(&cookie, None, true), &*on_change);
                 }
                 Err(e) => set_text(s, YTS_PASTE_ERR, e),
             }
@@ -232,18 +232,15 @@ fn ask_paste(s: &mut Cursive, on_change: Arc<dyn Fn(LibraryChange) + Send + Sync
 }
 
 fn remove_yt_session(s: &mut Cursive, on_change: &dyn Fn(LibraryChange)) {
-    let removed = yt_library::set_session_cookie(None)
-        .and_then(|()| yt_library::set_firefox_profile(None))
-        .and_then(|()| yt_library::set_session_pasted(false));
+    let removed = yt_library::remove_session();
     refresh_yt_session(s);
     if let Err(e) = removed {
         return set_text(s, YT_STATUS, format!("Error: {e}"));
     }
     set_text(s, YT_STATUS, String::new());
-    if yt_library::links().is_empty() {
-        // en la pantalla de inicio no hay Library que lo haga
-        crate::library::remove_yt_cache();
-    }
+    // siempre: aunque queden links, la caché en disco puede tener datos de la cuenta
+    // (en la pantalla de inicio no hay Library que lo haga)
+    crate::library::remove_yt_cache();
     on_change(LibraryChange::YtSessionRemoved);
 }
 

@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use regex::Regex;
 use serde_json::{json, Value};
@@ -364,12 +365,41 @@ fn all_pages<T>(remix: bool, root: bool, first: Value, parse: impl Fn(&Value) ->
     Ok(out)
 }
 
+/// Con sesión prueba primero el pedido autenticado (sirve para listas privadas de la cuenta);
+/// si vence o falla, cae al pedido público.
+fn with_session_fallback<T>(
+    cookie: Option<String>,
+    authed: impl FnOnce(&str) -> Result<T, SessionError>,
+    public: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    match cookie.as_deref().map(authed) {
+        Some(Ok(v)) => Ok(v),
+        _ => public(),
+    }
+}
+
+/// Sigue las continuaciones con la sesión (tope `MAX_PAGES`).
+fn session_pages(cookie: &str, first: Value) -> Result<Vec<Track>, SessionError> {
+    let (mut out, mut body) = (Vec::new(), first);
+    for _ in 0..MAX_PAGES {
+        let (items, next) = parse_track_page(&browse_session(cookie, body)?);
+        out.extend(items);
+        match next {
+            Some(t) => body = json!({"continuation": t}),
+            None => break,
+        }
+    }
+    Ok(out)
+}
+
 pub fn fetch_playlist_tracks(id: &str) -> Result<Vec<Track>, String> {
-    all_pages(true, true, json!({"browseId": format!("VL{id}")}), parse_track_page)
+    let first = || json!({"browseId": format!("VL{id}")});
+    with_session_fallback(session_cookie(), |c| session_pages(c, first()), || all_pages(true, true, first(), parse_track_page))
 }
 
 pub fn fetch_album_tracks(browse_id: &str) -> Result<Vec<Track>, String> {
-    all_pages(true, false, json!({"browseId": browse_id}), parse_track_page)
+    let first = || json!({"browseId": browse_id});
+    with_session_fallback(session_cookie(), |c| session_pages(c, first()), || all_pages(true, false, first(), parse_track_page))
 }
 
 /// Lo que trae un link: título, resumen y las playlists/álbumes que agrega.
@@ -482,7 +512,8 @@ fn read_trimmed(name: &str) -> Option<String> {
     Some(t.trim().to_string()).filter(|t| !t.is_empty())
 }
 
-/// `None` borra el archivo; en Unix se crea con permisos 0600.
+/// `None` borra el archivo. Escribe a un temporal del mismo directorio (0600 en Unix) y renombra:
+/// el reemplazo es atómico y el resultado queda 0600 aunque el destino ya existiera con otros permisos.
 fn write_private(name: &str, value: Option<&str>) -> Result<(), String> {
     let path = config_path(name);
     let Some(value) = value else {
@@ -491,11 +522,67 @@ fn write_private(name: &str, value: Option<&str>) -> Result<(), String> {
             _ => Ok(()),
         };
     };
+    let tmp = path.with_file_name(format!(".{name}.tmp"));
+    let _ = std::fs::remove_file(&tmp); // un temporal viejo conservaría sus permisos
     let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
+    opts.write(true).create_new(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
-    std::io::Write::write_all(&mut opts.open(path).map_err(|e| e.to_string())?, value.as_bytes()).map_err(|e| e.to_string())
+    let written = opts
+        .open(&tmp)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, value.as_bytes()))
+        .and_then(|()| std::fs::rename(&tmp, &path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written.map_err(|e| e.to_string())
+}
+
+/// Huella de una cookie para comparar sesiones sin guardarla ni mostrarla.
+pub fn fingerprint(cookie: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    cookie.hash(&mut h);
+    h.finish()
+}
+
+/// Toda escritura o borrado de la sesión (cookie y marcadores) pasa por este candado.
+static SESSION_LOCK: Mutex<()> = Mutex::new(());
+
+fn session_lock() -> std::sync::MutexGuard<'static, ()> {
+    SESSION_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Marcadores primero y la cookie al final: si algo falla a medias no queda una cookie sin su origen.
+fn write_session(cookie: &str, profile: Option<&Path>, pasted: bool) -> Result<(), String> {
+    set_firefox_profile(profile).and_then(|()| set_session_pasted(pasted)).and_then(|()| set_session_cookie(Some(cookie)))
+}
+
+/// Guarda la sesión y de dónde salió (pegada o Firefox con/sin renovación).
+pub fn set_session(cookie: &str, profile: Option<&Path>, pasted: bool) -> Result<(), String> {
+    let _g = session_lock();
+    write_session(cookie, profile, pasted)
+}
+
+/// Borra cookie y marcadores; intenta todo aunque algo falle y devuelve el primer error.
+pub fn remove_session() -> Result<(), String> {
+    let _g = session_lock();
+    [set_session_cookie(None), set_firefox_profile(None), set_session_pasted(false)].into_iter().collect()
+}
+
+/// Como `replace_session_if`, pero distingue "no se quiso escribir" (`Ok(false)`) de un error de disco.
+pub fn try_replace_session_if(expected_fp: Option<u64>, new: &str, profile: Option<&Path>, pasted: bool) -> Result<bool, String> {
+    let _g = session_lock();
+    if session_cookie().as_deref().map(fingerprint) != expected_fp {
+        return Ok(false);
+    }
+    write_session(new, profile, pasted).map(|()| true)
+}
+
+/// Guarda `new` solo si la cookie guardada sigue siendo la de huella `expected_fp` (nadie quitó ni cambió
+/// la sesión mientras tanto). Devuelve si escribió.
+pub fn replace_session_if(expected_fp: Option<u64>, new: &str, profile: Option<&Path>, pasted: bool) -> bool {
+    try_replace_session_if(expected_fp, new, profile, pasted).unwrap_or(false)
 }
 
 pub fn session_cookie() -> Option<String> {
@@ -538,7 +625,7 @@ pub fn clean_pasted_cookie(input: &str) -> Result<String, String> {
     let kept: Vec<&str> = input
         .split(';')
         .map(str::trim)
-        .filter(|p| p.split_once('=').is_some_and(|(n, _)| is_session_cookie(n)))
+        .filter(|p| p.split_once('=').is_some_and(|(n, v)| is_session_cookie(n) && !v.trim().is_empty()))
         .collect();
     let joined = kept.join("; ");
     if cookie_value(&joined, "SAPISID").is_none() && cookie_value(&joined, "__Secure-3PAPISID").is_none() {
@@ -601,14 +688,22 @@ fn browse_session(cookie: &str, body: Value) -> Result<Value, SessionError> {
     let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let auth = auth_header(cookie, ts).ok_or(SessionError::Expired)?;
     let (host, body) = client_body(true, body);
+    let sensitive = |v: &str| {
+        reqwest::header::HeaderValue::from_str(v)
+            .map(|mut h| {
+                h.set_sensitive(true);
+                h
+            })
+            .map_err(|_| SessionError::Other("Sesión con caracteres no válidos".into()))
+    };
     let res = super::http()
         .post(format!("{host}/youtubei/v1/browse?prettyPrint=false"))
         .header("Origin", host)
         .header("X-Origin", host)
         .header("X-Goog-AuthUser", "0")
         .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0")
-        .header("Cookie", cookie)
-        .header("Authorization", auth)
+        .header("Cookie", sensitive(cookie)?)
+        .header("Authorization", sensitive(&auth)?)
         .json(&body)
         .send()
         .map_err(|e| SessionError::Other(format!("No pude conectar con YouTube ({})", if e.is_timeout() { "tiempo agotado" } else { "red" })))?;
@@ -626,15 +721,7 @@ fn browse_session(cookie: &str, body: Value) -> Result<Value, SessionError> {
 
 /// Canciones que me gustan (`VLLM`, con continuaciones), listas y álbumes de la cuenta.
 pub fn fetch_session_library(cookie: &str) -> Result<YtSessionLibrary, SessionError> {
-    let (mut tracks, mut body) = (Vec::new(), json!({"browseId": "VLLM"}));
-    for _ in 0..MAX_PAGES {
-        let (items, next) = parse_track_page(&browse_session(cookie, body)?);
-        tracks.extend(items);
-        match next {
-            Some(t) => body = json!({"continuation": t}),
-            None => break,
-        }
-    }
+    let tracks = session_pages(cookie, json!({"browseId": "VLLM"}))?;
     let playlists = parse_liked_playlists(&browse_session(cookie, json!({"browseId": "FEmusic_liked_playlists"}))?);
     let albums = parse_liked_albums(&browse_session(cookie, json!({"browseId": "FEmusic_liked_albums"}))?);
     Ok(YtSessionLibrary { tracks, playlists, albums })
@@ -767,6 +854,52 @@ mod tests {
             "SID=a; SAPISID=c; __Secure-3PSIDTS=d; YSC=e"
         );
         assert!(clean_pasted_cookie("SID=a; YSC=e").unwrap_err().contains("falta SAPISID"));
+        assert!(clean_pasted_cookie("SAPISID=").unwrap_err().contains("falta SAPISID"));
+        assert!(clean_pasted_cookie("SAPISID= ; SID=a").is_err());
+        assert_eq!(clean_pasted_cookie("__Secure-3PAPISID=x").unwrap(), "__Secure-3PAPISID=x");
+    }
+
+    #[test]
+    fn replace_session_only_if_unchanged() {
+        let _g = crate::config::test_sandbox();
+        let fp = |c: &str| Some(fingerprint(c));
+        set_session("SAPISID=a", None, true).unwrap();
+        assert!(session_pasted());
+        // la sesión cambió: no escribe
+        assert!(!replace_session_if(fp("SAPISID=otra"), "SAPISID=n", Some(Path::new("/p")), false));
+        assert_eq!(session_cookie().as_deref(), Some("SAPISID=a"));
+        // igual: escribe cookie y marcadores
+        assert!(replace_session_if(fp("SAPISID=a"), "SAPISID=n", Some(Path::new("/p")), false));
+        assert_eq!((session_cookie().as_deref(), firefox_profile(), session_pasted()), (Some("SAPISID=n"), Some(PathBuf::from("/p")), false));
+        // quitar entre medio: no revive
+        remove_session().unwrap();
+        assert!(!replace_session_if(fp("SAPISID=n"), "SAPISID=z", Some(Path::new("/p")), false));
+        assert!(session_cookie().is_none() && firefox_profile().is_none() && !session_pasted());
+        // sin sesión al empezar y sin sesión ahora: escribe
+        assert!(replace_session_if(None, "SAPISID=z", None, false));
+    }
+
+    #[test]
+    fn session_fallback_cases() {
+        let ok = |_: &str| Ok::<_, SessionError>(1);
+        let boom = |_: &str| Err::<i32, _>(SessionError::Expired);
+        assert_eq!(with_session_fallback(Some("c".into()), ok, || Ok(2)), Ok(1));
+        assert_eq!(with_session_fallback(Some("c".into()), boom, || Ok(2)), Ok(2));
+        assert_eq!(with_session_fallback(None, ok, || Ok(2)), Ok(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_private_resets_loose_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let _g = crate::config::test_sandbox();
+        let path = config_path(COOKIE_FILE);
+        std::fs::write(&path, "viejo").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(COOKIE_FILE, Some("nuevo")).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "nuevo");
+        assert!(!path.with_file_name(format!(".{COOKIE_FILE}.tmp")).exists());
     }
 
     #[test]

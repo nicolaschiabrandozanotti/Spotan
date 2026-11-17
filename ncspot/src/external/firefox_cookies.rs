@@ -77,8 +77,11 @@ pub fn profile_roots() -> Vec<PathBuf> {
         let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
             return Vec::new();
         };
+        let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".config"));
         vec![
             home.join(".mozilla/firefox"),
+            config.join("mozilla/firefox"),
+            home.join(".var/app/org.mozilla.firefox/config/mozilla/firefox"),
             home.join(".var/app/org.mozilla.firefox/.mozilla/firefox"),
             home.join("snap/firefox/common/.mozilla/firefox"),
         ]
@@ -124,6 +127,7 @@ struct TempDir(PathBuf);
 
 impl TempDir {
     fn new(base: &Path) -> std::io::Result<Self> {
+        sweep_stale(base);
         static N: AtomicU32 = AtomicU32::new(0);
         let mut last = None;
         for _ in 0..8 {
@@ -149,9 +153,33 @@ impl TempDir {
     }
 }
 
+/// Borra (sin fallar) copias `spotan-ff-*` propias de más de una hora que quedaron de otra ejecución.
+fn sweep_stale(base: &Path) {
+    let Ok(entries) = fs::read_dir(base) else { return };
+    let limit = std::time::Duration::from_secs(3600);
+    for e in entries.flatten() {
+        if !e.file_name().to_string_lossy().starts_with("spotan-ff-") {
+            continue;
+        }
+        let Ok(m) = e.metadata() else { continue };
+        #[cfg(unix)]
+        if std::os::unix::fs::MetadataExt::uid(&m) != unsafe { libc::geteuid() } {
+            continue;
+        }
+        let old = m.modified().ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > limit);
+        if m.is_dir() && old {
+            let _ = fs::remove_dir_all(e.path());
+        }
+    }
+}
+
 impl Drop for TempDir {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        if let Err(e) = fs::remove_dir_all(&self.0) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("No se pudo borrar la copia temporal de cookies de Firefox ({:?})", e.kind());
+            }
+        }
     }
 }
 
@@ -267,6 +295,8 @@ mod tests {
                 (".youtube.com", "ST-abc", "v3", "", 1),
                 (".youtube.com", "__Secure-3PSIDTS", "v4", "", 1),
                 (".google.com", "HSID", "v5", "", 1),
+                ("notyoutube.com", "SAPISID", "v8", "", 9),
+                ("youtube.com.evil.com", "SID", "v9", "", 1),
                 (".youtube.com", "SSID", "v6", "^userContextId=1", 1),
             ],
         );
@@ -274,6 +304,30 @@ mod tests {
         assert_eq!(got.last_access, 7);
         let names: Vec<&str> = got.header.split("; ").map(|c| c.split('=').next().unwrap()).collect();
         assert_eq!(names, ["SAPISID", "SID", "__Secure-3PSIDTS"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profile_roots_include_xdg_and_flatpak_config() {
+        let roots = profile_roots();
+        let ends = |s: &str| roots.iter().any(|r| r.ends_with(s));
+        assert!(ends("mozilla/firefox") && ends(".var/app/org.mozilla.firefox/config/mozilla/firefox"));
+        assert!(roots.iter().any(|r| r.ends_with(".config/mozilla/firefox")) || std::env::var_os("XDG_CONFIG_HOME").is_some());
+    }
+
+    #[test]
+    fn stale_temp_dirs_are_swept() {
+        let base = tempfile::tempdir().unwrap();
+        let old = base.path().join("spotan-ff-1-a-0");
+        let other = base.path().join("otra-cosa");
+        for d in [&old, &other] {
+            fs::create_dir(d).unwrap();
+        }
+        let two_hours_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        fs::File::open(&old).unwrap().set_modified(two_hours_ago).unwrap();
+        fs::File::open(&other).unwrap().set_modified(two_hours_ago).unwrap();
+        let _t = TempDir::new(base.path()).unwrap();
+        assert!(!old.exists() && other.exists());
     }
 
     #[test]
