@@ -119,21 +119,32 @@ fn locked(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::PermissionDenied || e.raw_os_error() == Some(32)
 }
 
-/// Directorio temporal propio; se borra al soltarlo.
+/// Directorio temporal propio (modo 0700, siempre nuevo); se borra al soltarlo.
 struct TempDir(PathBuf);
 
 impl TempDir {
     fn new(base: &Path) -> std::io::Result<Self> {
         static N: AtomicU32 = AtomicU32::new(0);
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let dir = base.join(format!(
-            "spotan-ff-{}-{nanos}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&dir)?;
+        let mut last = None;
+        for _ in 0..8 {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos());
+            let name = format!("spotan-ff-{}-{nanos:x}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed));
+            match Self::create_at(base.join(name)) {
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = Some(e),
+                r => return r,
+            }
+        }
+        Err(last.unwrap())
+    }
+
+    /// Falla si la ruta ya existe (no reutiliza directorios ni symlinks ajenos).
+    fn create_at(dir: PathBuf) -> std::io::Result<Self> {
+        let mut b = fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+        b.create(&dir)?;
         Ok(Self(dir))
     }
 }
@@ -154,7 +165,7 @@ fn read_profile_in(profile: &Path, tmp_base: &Path) -> Result<Option<SessionCook
         return Ok(None);
     }
     let tmp = TempDir::new(tmp_base).map_err(|e| if locked(&e) { FfError::Locked } else { FfError::Other(e.to_string()) })?;
-    for suffix in ["", "-wal", "-shm"] {
+    for suffix in ["", "-wal"] {
         let from = profile.join(format!("cookies.sqlite{suffix}"));
         if suffix.is_empty() || from.exists() {
             fs::copy(&from, tmp.0.join(format!("cookies.sqlite{suffix}")))
@@ -163,23 +174,27 @@ fn read_profile_in(profile: &Path, tmp_base: &Path) -> Result<Option<SessionCook
     }
     let other = |e: rusqlite::Error| FfError::Other(e.to_string());
     let conn = Connection::open_with_flags(tmp.0.join("cookies.sqlite"), OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(other)?;
+    // Filtro por nombre en SQL (literales fijos): una fila ajena con value raro no debe abortar la lectura.
+    let names = SESSION_COOKIES.iter().map(|n| format!("'{n}'")).collect::<Vec<_>>().join(", ");
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             "SELECT name, value, lastAccessed FROM moz_cookies \
              WHERE (host = 'youtube.com' OR host LIKE '%.youtube.com') AND originAttributes = '' \
-             ORDER BY name",
-        )
+             AND (name IN ({names}) OR name LIKE '\\_\\_Secure-1PSID%' ESCAPE '\\' \
+                  OR name LIKE '\\_\\_Secure-3PSID%' ESCAPE '\\') \
+             ORDER BY name"
+        ))
         .map_err(other)?;
     let rows = stmt
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1).ok().flatten(), r.get::<_, i64>(2)?)))
         .map_err(other)?;
     let mut parts = Vec::new();
     let mut last_access = None;
     for row in rows {
         let (name, value, accessed) = row.map_err(other)?;
-        if !is_session_cookie(&name) {
+        let Some(value) = value.filter(|_| is_session_cookie(&name)) else {
             continue;
-        }
+        };
         if name == "SAPISID" {
             last_access = Some(accessed);
         }
@@ -305,5 +320,46 @@ mod tests {
         let c = SessionCookies { header: "SAPISID=secreto1; SID=secreto2".into(), last_access: 3 };
         let s = format!("{c:?}");
         assert!(!s.contains("secreto") && s.contains('2'));
+    }
+
+    #[test]
+    fn bad_value_in_non_session_row_does_not_abort() {
+        let root = tempfile::tempdir().unwrap();
+        let p = fake_profile(root.path(), "a", &[(".youtube.com", "SAPISID", "v", "", 4)]);
+        let conn = Connection::open(p.join("cookies.sqlite")).unwrap();
+        conn.execute("INSERT INTO moz_cookies VALUES ('otra', NULL, '.youtube.com', '', 1)", []).unwrap();
+        conn.execute("INSERT INTO moz_cookies VALUES ('blob', x'00ff', '.youtube.com', '', 1)", []).unwrap();
+        drop(conn);
+        assert_eq!(read_profile(&p).unwrap().unwrap().last_access, 4);
+    }
+
+    #[test]
+    fn reads_session_that_lives_only_in_wal() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("a");
+        fs::create_dir_all(&dir).unwrap();
+        let conn = Connection::open(dir.join("cookies.sqlite")).unwrap();
+        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+        conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+        conn.execute(
+            "CREATE TABLE moz_cookies(name TEXT, value TEXT, host TEXT, originAttributes TEXT, lastAccessed INTEGER)",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO moz_cookies VALUES ('SAPISID', 'v', '.youtube.com', '', 6)", []).unwrap();
+        assert!(dir.join("cookies.sqlite-wal").metadata().unwrap().len() > 0);
+        assert_eq!(read_profile(&dir).unwrap().unwrap().last_access, 6);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_dir_is_private_and_never_reused() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tempfile::tempdir().unwrap();
+        let t = TempDir::new(base.path()).unwrap();
+        assert_eq!(fs::metadata(&t.0).unwrap().permissions().mode() & 0o777, 0o700);
+        let e = TempDir::create_at(t.0.clone()).err().unwrap();
+        assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(t.0.exists(), "el existente no se toca");
     }
 }
