@@ -142,7 +142,7 @@ impl LibraryView {
             match tab {
                 LibraryTab::Tracks => tabview.add_tab(
                     "Tracks",
-                    mixed_list(queue.clone(), library.clone(), library.tracks.clone(), vec![(Source::SoundCloud, library.sc_tracks.clone())]),
+                    mixed_list(queue.clone(), library.clone(), library.tracks.clone(), vec![(Source::YouTube, library.yt_tracks.clone()), (Source::SoundCloud, library.sc_tracks.clone())]),
                 ),
                 LibraryTab::Albums => tabview.add_tab(
                     "Albums",

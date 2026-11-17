@@ -313,7 +313,9 @@ impl Application {
                     ui::settings::LibraryChange::ScLoaded => library.update_soundcloud(),
                     ui::settings::LibraryChange::ScRemoved => library.clear_soundcloud(),
                     ui::settings::LibraryChange::ScToggled => library.sc_visibility_changed(),
-                    ui::settings::LibraryChange::YtLinksChanged if external::yt_library::links().is_empty() => {
+                    ui::settings::LibraryChange::YtLinksChanged if external::yt_library::links().is_empty()
+                        && external::yt_library::session_cookie().is_none() =>
+                    {
                         library.clear_youtube()
                     }
                     ui::settings::LibraryChange::YtLinksChanged => library.update_youtube(),

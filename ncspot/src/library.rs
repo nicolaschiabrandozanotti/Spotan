@@ -15,7 +15,7 @@ use crate::config::Config;
 use crate::config::{self, CACHE_VERSION};
 use crate::events::EventManager;
 use crate::external::sc_library::{self, ScLibrary, ScUser};
-use crate::external::yt_library::{self, YtLibrary};
+use crate::external::yt_library::{self, SessionError, YtLibrary, YtSessionLibrary};
 use crate::model::album::Album;
 use crate::model::artist::Artist;
 use crate::model::playable::Playable;
@@ -46,6 +46,9 @@ const CACHE_SC_PLAYLISTS: &str = "sc_playlists.db";
 /// Álbumes de SoundCloud en caché.
 const CACHE_SC_ALBUMS: &str = "sc_albums.db";
 
+/// Temas guardados de la cuenta de YouTube en caché.
+const CACHE_YT_TRACKS: &str = "yt_tracks.db";
+
 /// Playlists de YouTube en caché.
 const CACHE_YT_PLAYLISTS: &str = "yt_playlists.db";
 
@@ -54,6 +57,7 @@ const CACHE_YT_ALBUMS: &str = "yt_albums.db";
 
 /// Borra la caché en disco de YouTube (también sirve sin `Library`).
 pub fn remove_yt_cache() {
+    let _ = std::fs::remove_file(config::cache_path(CACHE_YT_TRACKS));
     let _ = std::fs::remove_file(config::cache_path(CACHE_YT_PLAYLISTS));
     let _ = std::fs::remove_file(config::cache_path(CACHE_YT_ALBUMS));
 }
@@ -63,6 +67,95 @@ pub fn remove_sc_cache() {
     let _ = std::fs::remove_file(config::cache_path(CACHE_SC_TRACKS));
     let _ = std::fs::remove_file(config::cache_path(CACHE_SC_PLAYLISTS));
     let _ = std::fs::remove_file(config::cache_path(CACHE_SC_ALBUMS));
+}
+
+/// Links y huella de la sesión de YouTube de una descarga (la cookie nunca se guarda ni se loguea).
+type YtKey = (Vec<String>, Option<u64>);
+
+/// Temas, listas y álbumes ya juntos.
+type YtMerged = (Vec<Track>, Vec<Playlist>, Vec<Album>);
+
+fn fingerprint(cookie: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    cookie.hash(&mut h);
+    h.finish()
+}
+
+fn yt_key() -> YtKey {
+    (yt_library::links(), yt_library::session_cookie().as_deref().map(fingerprint))
+}
+
+fn yt_has_source() -> bool {
+    !yt_library::links().is_empty() || yt_library::session_cookie().is_some()
+}
+
+/// Qué hacer tras un intento de bajar la sesión.
+#[derive(Debug, PartialEq)]
+enum RenewStep {
+    Retry,
+    GiveUp,
+    Done,
+}
+
+/// Decide si se relee Firefox: solo si venció, hay perfil permitido y no se reintentó ya.
+fn renew_plan(expired: bool, has_permission: bool, retried: bool) -> RenewStep {
+    match (expired, has_permission && !retried) {
+        (false, _) => RenewStep::Done,
+        (true, true) => RenewStep::Retry,
+        (true, false) => RenewStep::GiveUp,
+    }
+}
+
+/// Junta links y sesión: links primero, sin repetir id por tipo y sin la lista `LM`.
+/// Temas solo viene de la sesión.
+fn merge_youtube(links: YtLibrary, session: Option<YtSessionLibrary>) -> YtMerged {
+    let session = session.unwrap_or(YtSessionLibrary { tracks: vec![], playlists: vec![], albums: vec![] });
+    let (mut seen_t, mut seen_p, mut seen_a) = (HashSet::new(), HashSet::new(), HashSet::new());
+    let tracks = session.tracks.into_iter().filter(|t| seen_t.insert(t.id.clone())).collect();
+    let playlists = links
+        .playlists
+        .into_iter()
+        .chain(session.playlists)
+        .filter(|p| p.id != "LM" && seen_p.insert(p.id.clone()))
+        .collect();
+    let albums = links
+        .albums
+        .into_iter()
+        .chain(session.albums)
+        .filter(|a| seen_a.insert(a.id.clone()))
+        .collect();
+    (tracks, playlists, albums)
+}
+
+/// Baja links y sesión; con la sesión vencida relee Firefox (si hay perfil) y reintenta una vez.
+/// Devuelve la clave del resultado (cambia si la renovación guardó una cookie nueva).
+fn fetch_youtube(links: &[String], cookie: Option<String>, key: YtKey) -> (YtKey, Result<YtMerged, SessionError>) {
+    let links_lib = match yt_library::fetch_links(links) {
+        Ok(l) => l,
+        Err(e) => return (key, Err(SessionError::Other(e))),
+    };
+    let Some(mut cookie) = cookie else { return (key, Ok(merge_youtube(links_lib, None))) };
+    let (mut key, mut retried) = (key, false);
+    loop {
+        let result = yt_library::fetch_session_library(&cookie);
+        let expired = matches!(result, Err(SessionError::Expired));
+        let profile = yt_library::firefox_profile();
+        match renew_plan(expired, profile.is_some(), retried) {
+            RenewStep::Done => return (key, result.map(|s| merge_youtube(links_lib, Some(s)))),
+            RenewStep::GiveUp => return (key, Err(SessionError::Expired)),
+            RenewStep::Retry => {
+                retried = true;
+                match crate::external::firefox_cookies::read_profile(&profile.unwrap()) {
+                    Ok(Some(c)) if yt_library::set_session_cookie(Some(&c.header)).is_ok() => {
+                        key.1 = Some(fingerprint(&c.header));
+                        cookie = c.header;
+                    }
+                    _ => return (key, Err(SessionError::Expired)),
+                }
+            }
+        }
+    }
 }
 
 /// The user library with all their saved tracks, albums, playlists... High level interface to the
@@ -80,6 +173,7 @@ pub struct Library {
     pub sc_tracks: Arc<RwLock<Vec<Track>>>,
     pub sc_playlists: Arc<RwLock<Vec<Playlist>>>,
     pub sc_albums: Arc<RwLock<Vec<Album>>>,
+    pub yt_tracks: Arc<RwLock<Vec<Track>>>,
     pub yt_playlists: Arc<RwLock<Vec<Playlist>>>,
     pub yt_albums: Arc<RwLock<Vec<Album>>>,
     /// Sube con cada cambio de las listas; las vistas mezcladas lo comparan para recalcular.
@@ -89,10 +183,10 @@ pub struct Library {
     sc_status: Arc<RwLock<Option<Result<ScUser, String>>>>,
     /// Perfil cuya descarga está en curso (evita descargas completas en paralelo).
     sc_inflight: Arc<Mutex<Option<String>>>,
-    /// Hay links de YouTube; en memoria para no leer el archivo en cada dibujo.
+    /// Hay links o sesión de YouTube; en memoria para no leer los archivos en cada dibujo.
     yt_links_set: Arc<AtomicBool>,
-    /// Links cuya descarga está en curso (evita descargas completas en paralelo).
-    yt_inflight: Arc<Mutex<Option<Vec<String>>>>,
+    /// Links y sesión cuya descarga está en curso (evita descargas completas en paralelo).
+    yt_inflight: Arc<Mutex<Option<YtKey>>>,
     ev: EventManager,
     spotify: Spotify,
     pub cfg: Arc<Config>,
@@ -114,6 +208,7 @@ impl Library {
             sc_tracks: Arc::new(RwLock::new(Vec::new())),
             sc_playlists: Arc::new(RwLock::new(Vec::new())),
             sc_albums: Arc::new(RwLock::new(Vec::new())),
+            yt_tracks: Arc::new(RwLock::new(Vec::new())),
             yt_playlists: Arc::new(RwLock::new(Vec::new())),
             yt_albums: Arc::new(RwLock::new(Vec::new())),
             generation: Arc::new(AtomicU64::new(0)),
@@ -169,13 +264,14 @@ impl Library {
             sc_tracks: Arc::new(RwLock::new(Vec::new())),
             sc_playlists: Arc::new(RwLock::new(Vec::new())),
             sc_albums: Arc::new(RwLock::new(Vec::new())),
+            yt_tracks: Arc::new(RwLock::new(Vec::new())),
             yt_playlists: Arc::new(RwLock::new(Vec::new())),
             yt_albums: Arc::new(RwLock::new(Vec::new())),
             generation: Arc::new(AtomicU64::new(0)),
             sc_profile_set: Arc::new(AtomicBool::new(sc_library::profile().is_some())),
             sc_status: Arc::new(RwLock::new(None)),
             sc_inflight: Arc::new(Mutex::new(None)),
-            yt_links_set: Arc::new(AtomicBool::new(!yt_library::links().is_empty())),
+            yt_links_set: Arc::new(AtomicBool::new(yt_has_source())),
             yt_inflight: Arc::new(Mutex::new(None)),
             ev,
             spotify,
@@ -213,7 +309,7 @@ impl Library {
             && self.sc_profile_set.load(Ordering::SeqCst)
     }
 
-    /// YouTube está prendido y hay links cargados.
+    /// YouTube está prendido y hay links o sesión cargados.
     pub fn yt_active(&self) -> bool {
         crate::external::enabled().contains(&Source::YouTube)
             && self.yt_links_set.load(Ordering::SeqCst)
@@ -310,27 +406,35 @@ impl Library {
         });
     }
 
-    /// Reemplaza las listas de YouTube solo si todo bajó bien; si no, queda lo anterior.
-    /// Un resultado de links que ya no son los actuales se descarta.
-    fn apply_yt_result(&self, links: &[String], result: Result<YtLibrary, String>) {
-        if yt_library::links() != links {
+    /// Reemplaza lo de YouTube solo si todo bajó bien; si no, queda lo anterior.
+    /// Un resultado de links o sesión que ya no son los actuales se descarta.
+    fn apply_yt_result(&self, key: &YtKey, result: Result<YtMerged, SessionError>) {
+        if yt_key() != *key {
             return;
         }
         match result {
-            Ok(data) => {
-                *self.yt_playlists.write().unwrap() = data.playlists;
-                *self.yt_albums.write().unwrap() = data.albums;
+            Ok((tracks, playlists, albums)) => {
+                *self.yt_tracks.write().unwrap() = tracks;
+                *self.yt_playlists.write().unwrap() = playlists;
+                *self.yt_albums.write().unwrap() = albums;
+                self.save_cache(&config::cache_path(CACHE_YT_TRACKS), &self.yt_tracks.read().unwrap());
                 self.save_cache(
                     &config::cache_path(CACHE_YT_PLAYLISTS),
                     &self.yt_playlists.read().unwrap(),
                 );
-                self.save_cache(
-                    &config::cache_path(CACHE_YT_ALBUMS),
-                    &self.yt_albums.read().unwrap(),
-                );
+                self.save_cache(&config::cache_path(CACHE_YT_ALBUMS), &self.yt_albums.read().unwrap());
                 self.bump_generation();
             }
-            Err(e) => warn!("YouTube: no se pudo actualizar la biblioteca: {e}"),
+            Err(SessionError::Expired) => {
+                warn!("YouTube: la sesión venció");
+                self.ev
+                    .notify("Sesión de YouTube vencida: tomala de nuevo en Ajustes (F4)".to_string());
+            }
+            Err(SessionError::Other(e)) => {
+                warn!("YouTube: no se pudo actualizar la biblioteca: {e}");
+                self.ev
+                    .notify(format!("YouTube: no se pudo actualizar la biblioteca ({e})"));
+            }
         }
     }
 
@@ -340,20 +444,27 @@ impl Library {
         if !crate::external::enabled().contains(&Source::YouTube) {
             return;
         }
-        let links = yt_library::links();
-        if links.is_empty() {
+        let (links, cookie) = (yt_library::links(), yt_library::session_cookie());
+        if links.is_empty() && cookie.is_none() {
             return;
         }
         self.yt_links_set.store(true, Ordering::SeqCst);
+        let key = (links.clone(), cookie.as_deref().map(fingerprint));
         {
             let mut inflight = self.yt_inflight.lock().unwrap();
-            if inflight.as_ref() == Some(&links) {
+            if inflight.as_ref() == Some(&key) {
                 return;
             }
-            *inflight = Some(links.clone());
+            *inflight = Some(key.clone());
         }
         let library = self.clone();
         thread::spawn(move || {
+            if library.yt_tracks.read().unwrap().is_empty() {
+                library.load_cache(
+                    &config::cache_path(CACHE_YT_TRACKS),
+                    library.yt_tracks.write().unwrap().as_mut(),
+                );
+            }
             if library.yt_playlists.read().unwrap().is_empty() {
                 library.load_cache(
                     &config::cache_path(CACHE_YT_PLAYLISTS),
@@ -366,18 +477,11 @@ impl Library {
                     library.yt_albums.write().unwrap().as_mut(),
                 );
             }
-            let result = yt_library::fetch_links(&links);
-            // si los links cambiaron mientras bajaba, este resultado ya no corresponde
-            if yt_library::links() == links {
-                if let Err(e) = &result {
-                    library
-                        .ev
-                        .notify(format!("YouTube: no se pudo actualizar la biblioteca ({e})"));
-                }
-                library.apply_yt_result(&links, result);
-            }
+            let (fetched_key, result) = fetch_youtube(&links, cookie, key.clone());
+            // si los links o la sesión cambiaron mientras bajaba, apply_yt_result lo descarta
+            library.apply_yt_result(&fetched_key, result);
             let mut inflight = library.yt_inflight.lock().unwrap();
-            if inflight.as_ref() == Some(&links) {
+            if inflight.as_ref() == Some(&key) {
                 *inflight = None;
             }
             drop(inflight);
@@ -387,21 +491,38 @@ impl Library {
 
     /// Se prendió o apagó YouTube en Ajustes: las vistas se recalculan (la caché queda).
     pub fn yt_visibility_changed(&self) {
-        self.yt_links_set
-            .store(!yt_library::links().is_empty(), Ordering::SeqCst);
+        self.refresh_yt_set();
         self.bump_generation();
         if crate::external::enabled().contains(&Source::YouTube) {
             self.update_youtube();
         }
     }
 
+    /// Actualiza la marca en memoria de "hay links o sesión".
+    fn refresh_yt_set(&self) {
+        self.yt_links_set.store(yt_has_source(), Ordering::SeqCst);
+    }
+
     /// Vacía lo de YouTube y borra su caché (al quitar los links).
     pub fn clear_youtube(&self) {
+        self.yt_tracks.write().unwrap().clear();
         self.yt_playlists.write().unwrap().clear();
         self.yt_albums.write().unwrap().clear();
         self.yt_links_set.store(false, Ordering::SeqCst);
         remove_yt_cache();
         self.bump_generation();
+    }
+
+    /// Se quitó la sesión: vacía los temas de la cuenta y rebaja lo demás (la mezcla se guarda junta).
+    pub fn clear_youtube_session(&self) {
+        self.yt_tracks.write().unwrap().clear();
+        if yt_library::links().is_empty() {
+            self.clear_youtube();
+        } else {
+            self.refresh_yt_set();
+            self.bump_generation();
+            self.update_youtube();
+        }
     }
 
     /// Se prendió o apagó SoundCloud en Ajustes: las vistas se recalculan (la caché queda).
@@ -977,10 +1098,15 @@ impl Library {
 
     /// Check whether `track` is saved in the user's library.
     pub fn is_saved_track(&self, track: &Playable) -> bool {
-        if let Playable::Track(t) = track
-            && t.source == Source::SoundCloud
-        {
-            return self.sc_tracks.read().unwrap().iter().any(|s| s.id == t.id);
+        if let Playable::Track(t) = track {
+            let saved = match t.source {
+                Source::SoundCloud => Some(&self.sc_tracks),
+                Source::YouTube => Some(&self.yt_tracks),
+                _ => None,
+            };
+            if let Some(saved) = saved {
+                return saved.read().unwrap().iter().any(|s| s.id == t.id);
+            }
         }
         if !*self.is_done.read().unwrap() {
             return false;
@@ -1747,22 +1873,25 @@ mod tests {
         Album::new_external(Source::YouTube, id.into(), id.into(), None, "".into(), None, None, 1)
     }
 
-    fn yt_lib() -> YtLibrary {
-        YtLibrary { playlists: vec![yt_playlist("p")], albums: vec![yt_album("a")] }
+    fn yt_merged() -> YtMerged {
+        (vec![], vec![yt_playlist("p")], vec![yt_album("a")])
     }
 
-    fn yt_test_library() -> (Arc<Library>, Vec<String>) {
-        let links = vec![YT_LINK.to_string()];
-        yt_library::set_links(&links).unwrap();
-        (test_library(), links)
+    fn yt_track(id: &str) -> Track {
+        Track { source: Source::YouTube, ..tracks(&[id]).remove(0) }
+    }
+
+    fn yt_test_library() -> (Arc<Library>, YtKey) {
+        yt_library::set_links(&[YT_LINK.to_string()]).unwrap();
+        (test_library(), yt_key())
     }
 
     #[test]
     fn yt_result_applied_cached_and_cleared() {
         let (_g, _d) = crate::config::test_sandbox();
-        let (lib, links) = yt_test_library();
+        let (lib, key) = yt_test_library();
         let g = lib.generation();
-        lib.apply_yt_result(&links, Ok(yt_lib()));
+        lib.apply_yt_result(&key, Ok(yt_merged()));
         assert_eq!(lib.yt_playlists.read().unwrap().len(), 1);
         assert_eq!(lib.yt_albums.read().unwrap().len(), 1);
         assert!(config::cache_path(CACHE_YT_PLAYLISTS).exists());
@@ -1778,10 +1907,10 @@ mod tests {
     #[test]
     fn yt_failed_update_keeps_previous() {
         let (_g, _d) = crate::config::test_sandbox();
-        let (lib, links) = yt_test_library();
-        lib.apply_yt_result(&links, Ok(yt_lib()));
+        let (lib, key) = yt_test_library();
+        lib.apply_yt_result(&key, Ok(yt_merged()));
         let g = lib.generation();
-        lib.apply_yt_result(&links, Err("red".into()));
+        lib.apply_yt_result(&key, Err(SessionError::Other("red".into())));
         assert_eq!(lib.yt_playlists.read().unwrap().len(), 1);
         assert_eq!(lib.yt_albums.read().unwrap().len(), 1);
         assert_eq!(lib.generation(), g);
@@ -1790,11 +1919,11 @@ mod tests {
     #[test]
     fn yt_stale_result_is_dropped() {
         let (_g, _d) = crate::config::test_sandbox();
-        let (lib, links) = yt_test_library();
+        let (lib, key) = yt_test_library();
         let g = lib.generation();
         // links cambiados mientras bajaba
         yt_library::set_links(&["https://www.youtube.com/playlist?list=PLotra".to_string()]).unwrap();
-        lib.apply_yt_result(&links, Ok(yt_lib()));
+        lib.apply_yt_result(&key, Ok(yt_merged()));
         assert!(lib.yt_playlists.read().unwrap().is_empty());
         assert!(lib.yt_albums.read().unwrap().is_empty());
         assert!(!config::cache_path(CACHE_YT_PLAYLISTS).exists());
@@ -1802,9 +1931,82 @@ mod tests {
     }
 
     #[test]
+    fn yt_tracks_applied_and_saved_flag() {
+        let (_g, _d) = crate::config::test_sandbox();
+        let (lib, key) = yt_test_library();
+        lib.apply_yt_result(&key, Ok((vec![yt_track("1")], vec![], vec![])));
+        assert!(lib.is_saved_track(&Playable::Track(yt_track("1"))));
+        assert!(!lib.is_saved_track(&Playable::Track(yt_track("2"))));
+        assert!(config::cache_path(CACHE_YT_TRACKS).exists());
+        lib.clear_youtube();
+        assert!(lib.yt_tracks.read().unwrap().is_empty());
+        assert!(!config::cache_path(CACHE_YT_TRACKS).exists());
+    }
+
+    #[test]
+    fn yt_session_expired_keeps_previous() {
+        let (_g, _d) = crate::config::test_sandbox();
+        let (lib, key) = yt_test_library();
+        lib.apply_yt_result(&key, Ok(yt_merged()));
+        let g = lib.generation();
+        lib.apply_yt_result(&key, Err(SessionError::Expired));
+        assert_eq!(lib.yt_playlists.read().unwrap().len(), 1);
+        assert_eq!(lib.generation(), g);
+    }
+
+    #[test]
+    fn yt_result_dropped_when_session_changes() {
+        let (_g, _d) = crate::config::test_sandbox();
+        let (lib, key) = yt_test_library();
+        yt_library::set_session_cookie(Some("SAPISID=x")).unwrap();
+        lib.apply_yt_result(&key, Ok(yt_merged()));
+        assert!(lib.yt_playlists.read().unwrap().is_empty());
+        let key = yt_key();
+        yt_library::set_session_cookie(None).unwrap();
+        lib.apply_yt_result(&key, Ok(yt_merged()));
+        assert!(lib.yt_playlists.read().unwrap().is_empty());
+    }
+
+    #[test]
+    fn renew_plan_cases() {
+        assert_eq!(renew_plan(true, true, false), RenewStep::Retry);
+        assert_eq!(renew_plan(true, false, false), RenewStep::GiveUp);
+        assert_eq!(renew_plan(true, true, true), RenewStep::GiveUp);
+        assert_eq!(renew_plan(false, true, false), RenewStep::Done);
+    }
+
+    #[test]
+    fn yt_active_with_session_only() {
+        let (_g, _d) = crate::config::test_sandbox();
+        let lib = test_library();
+        crate::external::set_enabled(Source::YouTube, true).unwrap();
+        lib.refresh_yt_set();
+        assert!(!lib.yt_active());
+        yt_library::set_session_cookie(Some("SAPISID=x")).unwrap();
+        lib.refresh_yt_set();
+        assert!(lib.yt_active());
+    }
+
+    #[test]
+    fn lm_not_in_playlists_and_dedup() {
+        let session = YtSessionLibrary {
+            tracks: vec![yt_track("t"), yt_track("t")],
+            playlists: vec![yt_playlist("LM"), yt_playlist("p"), yt_playlist("q")],
+            albums: vec![yt_album("a"), yt_album("b")],
+        };
+        let links = YtLibrary { playlists: vec![yt_playlist("p")], albums: vec![yt_album("a")] };
+        let (t, p, a) = merge_youtube(links, Some(session));
+        assert_eq!(t.len(), 1);
+        assert_eq!(p.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["p", "q"]);
+        assert_eq!(a.len(), 2);
+        let (t, p, _) = merge_youtube(YtLibrary { playlists: vec![yt_playlist("LM")], albums: vec![] }, None);
+        assert!(t.is_empty() && p.is_empty());
+    }
+
+    #[test]
     fn yt_update_does_nothing_while_off() {
         let (_g, _d) = crate::config::test_sandbox();
-        let (lib, _links) = yt_test_library();
+        let (lib, _key) = yt_test_library();
         crate::external::set_enabled(Source::YouTube, false).unwrap();
         let g = lib.generation();
         lib.update_youtube();
@@ -1815,7 +2017,7 @@ mod tests {
     #[test]
     fn yt_active_needs_service_and_links() {
         let (_g, _d) = crate::config::test_sandbox();
-        let (lib, _links) = yt_test_library();
+        let (lib, _key) = yt_test_library();
         crate::external::set_enabled(Source::YouTube, false).unwrap();
         lib.yt_links_set.store(true, Ordering::SeqCst);
         assert!(!lib.yt_active());
