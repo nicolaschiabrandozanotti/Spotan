@@ -128,6 +128,11 @@ fn merge_youtube(links: YtLibrary, session: Option<YtSessionLibrary>) -> YtMerge
     (tracks, playlists, albums)
 }
 
+/// La renovación solo puede guardar la cookie nueva si la sesión sigue siendo la de arranque.
+fn renewal_allowed(current: Option<&str>, started_with: Option<u64>) -> bool {
+    current.map(fingerprint) == started_with
+}
+
 /// Baja links y sesión; con la sesión vencida relee Firefox (si hay perfil) y reintenta una vez.
 /// Devuelve la clave del resultado (cambia si la renovación guardó una cookie nueva).
 fn fetch_youtube(links: &[String], cookie: Option<String>, key: YtKey) -> (YtKey, Result<YtMerged, SessionError>) {
@@ -146,12 +151,30 @@ fn fetch_youtube(links: &[String], cookie: Option<String>, key: YtKey) -> (YtKey
             RenewStep::GiveUp => return (key, Err(SessionError::Expired)),
             RenewStep::Retry => {
                 retried = true;
-                match crate::external::firefox_cookies::read_profile(&profile.unwrap()) {
+                // el usuario pudo quitar o cambiar la sesión mientras bajaba
+                if !renewal_allowed(yt_library::session_cookie().as_deref(), key.1) {
+                    return (key, Err(SessionError::Expired));
+                }
+                let Some(profile) = yt_library::firefox_profile() else {
+                    return (key, Err(SessionError::Expired));
+                };
+                match crate::external::firefox_cookies::read_profile(&profile) {
                     Ok(Some(c)) if yt_library::set_session_cookie(Some(&c.header)).is_ok() => {
                         key.1 = Some(fingerprint(&c.header));
                         cookie = c.header;
                     }
-                    _ => return (key, Err(SessionError::Expired)),
+                    Ok(Some(_)) => {
+                        debug!("YouTube: no se pudo guardar la sesión renovada");
+                        return (key, Err(SessionError::Expired));
+                    }
+                    Ok(None) => {
+                        debug!("YouTube: Firefox no tiene sesión de YouTube");
+                        return (key, Err(SessionError::Expired));
+                    }
+                    Err(_) => {
+                        debug!("YouTube: no se pudo leer el perfil de Firefox");
+                        return (key, Err(SessionError::Expired));
+                    }
                 }
             }
         }
@@ -513,14 +536,11 @@ impl Library {
         self.bump_generation();
     }
 
-    /// Se quitó la sesión: vacía los temas de la cuenta y rebaja lo demás (la mezcla se guarda junta).
+    /// Se quitó la sesión: nada de la cuenta debe reaparecer, así que se vacía todo YouTube
+    /// (memoria y cachés) y solo se vuelve a bajar lo de los links, si quedan.
     pub fn clear_youtube_session(&self) {
-        self.yt_tracks.write().unwrap().clear();
-        if yt_library::links().is_empty() {
-            self.clear_youtube();
-        } else {
-            self.refresh_yt_set();
-            self.bump_generation();
+        self.clear_youtube();
+        if !yt_library::links().is_empty() {
             self.update_youtube();
         }
     }
@@ -1965,6 +1985,37 @@ mod tests {
         yt_library::set_session_cookie(None).unwrap();
         lib.apply_yt_result(&key, Ok(yt_merged()));
         assert!(lib.yt_playlists.read().unwrap().is_empty());
+    }
+
+    #[test]
+    fn renewal_allowed_only_for_same_session() {
+        assert!(renewal_allowed(Some("a"), Some(fingerprint("a"))));
+        assert!(!renewal_allowed(Some("b"), Some(fingerprint("a"))));
+        assert!(!renewal_allowed(None, Some(fingerprint("a"))));
+    }
+
+    #[test]
+    fn clear_session_leaves_nothing_of_the_account() {
+        let (_g, _d) = crate::config::test_sandbox();
+        let (lib, _key) = yt_test_library();
+        crate::external::set_enabled(Source::YouTube, true).unwrap();
+        yt_library::set_session_cookie(Some("SAPISID=x")).unwrap();
+        let key = yt_key();
+        lib.apply_yt_result(&key, Ok((vec![yt_track("1")], vec![yt_playlist("p")], vec![yt_album("a")])));
+        assert!(config::cache_path(CACHE_YT_TRACKS).exists());
+        yt_library::set_session_cookie(None).unwrap();
+        lib.clear_youtube_session();
+        assert!(lib.yt_tracks.read().unwrap().is_empty());
+        assert!(lib.yt_playlists.read().unwrap().is_empty());
+        assert!(lib.yt_albums.read().unwrap().is_empty());
+        for f in [CACHE_YT_TRACKS, CACHE_YT_PLAYLISTS, CACHE_YT_ALBUMS] {
+            assert!(!config::cache_path(f).exists());
+        }
+        // quedan links: update_youtube corrió (marca en memoria, sin esperar a la red)
+        assert!(lib.yt_links_set.load(Ordering::SeqCst));
+        yt_library::set_links(&[]).unwrap();
+        lib.clear_youtube_session();
+        assert!(!lib.yt_links_set.load(Ordering::SeqCst));
     }
 
     #[test]
