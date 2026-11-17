@@ -93,13 +93,15 @@ With SoundCloud ticked, in **Settings** (`F4`), under *Other services*, paste yo
 With YouTube ticked, in **Settings** (`F4`), under *Other services*, paste a link into **Links** (`Ctrl+V` or right-click) and press **Agregar** (Add). Each link has its own **Quitar** (Remove).
 
 - Public YouTube and YouTube Music playlist or channel links work: `youtube.com/playlist?list=…`, `music.youtube.com/playlist?list=…`, `youtube.com/@handle` and `youtube.com/channel/UC…`. No login needed.
+- **Session (optional):** in the same section, under the links, the **Sesión** (Session) line shows the status (no session / connected). **Tomar de Firefox** (Take from Firefox) asks permission first (*Permitir y renovar sola* = allow and renew automatically, *Solo esta vez* = just this once, or *Cancelar*) and reads only the YouTube session cookies (Linux and Windows, including Flatpak/Snap Firefox). **Pegar** (Paste) is for other browsers (Chrome/Brave/Edge): on `music.youtube.com` open F12 > Network, pick any request, and copy the *Cookie* value under Headers. There are also **Abrir music.youtube.com** (Open) and **Quitar** (Remove).
+- With a session, *Música que me gusta* (your liked songs) goes in *Temas* (Tracks), your library playlists in *Listas* and your saved albums in *Álbumes*, mixed with everything else and read-only. If the session expires and you allowed renewal, Spoti re-reads it from Firefox by itself; otherwise it keeps the last library and shows "Sesión de YouTube vencida: tomala de nuevo en Ajustes (F4)" (session expired: take it again in Settings). The session is stored only on your computer (file with private permissions); **Quitar** deletes it and everything that came from the account.
 - A playlist goes in *Listas* (Lists). An artist channel brings its albums and singles/EPs to *Álbumes* (Albums) and its playlists to *Listas*; a regular channel brings its public playlists to *Listas*. They mix with Spotify and SoundCloud under the same filter bar (`[YT]`).
 - It refreshes when Spoti starts and with `Shift+U`. It is **read-only** (`YouTube: solo lectura`).
 
 Good to know:
-- **No YouTube or SoundCloud account needed.** Spoti decodes the audio itself (AAC); no yt-dlp, mpv or browser.
+- **No YouTube or SoundCloud account needed** (the YouTube session is optional). Spoti decodes the audio itself (AAC); no yt-dlp, mpv or browser.
 - When off they **cost nothing**: the YouTube/SoundCloud engine starts with the first track from those services (about 2 MiB more RAM while playing) and, if you turn them off, shuts down on the next track.
-- YouTube has no login (its library comes from public links, see above); for SoundCloud your public library can be loaded (see above). *Similar tracks* and *Add to playlist* are Spotify-only.
+- A YouTube login is optional (without one, the library comes from public links, see above); for SoundCloud your public library can be loaded (see above). *Similar tracks* and *Add to playlist* are Spotify-only.
 - On SoundCloud some tracks are 30 s previews (Go+ only); encrypted tracks can't be played and are skipped.
 - If YouTube or SoundCloud change something on their side, it may stop working until the next Spoti release.
 

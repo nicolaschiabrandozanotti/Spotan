@@ -93,13 +93,15 @@ Con SoundCloud marcado, en **Ajustes** (`F4`), bajo *Otros servicios*, pegá el 
 Con YouTube marcado, en **Ajustes** (`F4`), bajo *Otros servicios*, pegá un link en **Links** (`Ctrl+V` o clic derecho) y tocá **Agregar**. Cada link tiene su **Quitar**.
 
 - Sirven links públicos de playlists o canales de YouTube y YouTube Music: `youtube.com/playlist?list=…`, `music.youtube.com/playlist?list=…`, `youtube.com/@usuario` y `youtube.com/channel/UC…`. No hace falta iniciar sesión.
+- **Sesión (opcional):** en la misma sección, debajo de los links, la línea **Sesión** muestra el estado (sin sesión / conectada). **Tomar de Firefox** pide permiso primero (*Permitir y renovar sola*, *Solo esta vez* o *Cancelar*) y lee solo las cookies de sesión de YouTube (Linux y Windows, también Firefox Flatpak/Snap). **Pegar** sirve para otros navegadores (Chrome/Brave/Edge): en `music.youtube.com` abrí F12 > Red, elegí cualquier request, y en Encabezados copiá el valor de *Cookie*. También hay **Abrir music.youtube.com** y **Quitar**.
+- Con sesión, *Música que me gusta* va en *Temas*, tus playlists de la biblioteca en *Listas* y tus álbumes guardados en *Álbumes*, mezclados con todo lo demás y en solo lectura. Si la sesión vence y permitiste renovarla, Spoti la vuelve a leer de Firefox sola; si no, conserva la última biblioteca y avisa «Sesión de YouTube vencida: tomala de nuevo en Ajustes (F4)». La sesión se guarda solo en tu compu (archivo con permisos privados); **Quitar** la borra junto con todo lo que vino de la cuenta.
 - Una playlist va en *Listas*. De un canal de artista salen sus álbumes y sencillos/EPs en *Álbumes* y sus playlists en *Listas*; de un canal común, sus playlists públicas en *Listas*. Se mezclan con Spotify y SoundCloud con la misma barra de filtros (`[YT]`).
 - Se actualiza al abrir Spoti y con `Shift+U`. Es **solo lectura** (`YouTube: solo lectura`).
 
 Bueno saber:
-- **No hace falta cuenta** de YouTube ni de SoundCloud. Spoti decodifica el audio adentro (AAC); no usa yt-dlp, mpv ni navegador.
+- **No hace falta cuenta** de YouTube ni de SoundCloud (la sesión de YouTube es opcional). Spoti decodifica el audio adentro (AAC); no usa yt-dlp, mpv ni navegador.
 - Apagados **no consumen nada**: el motor de YouTube/SoundCloud arranca recién con el primer tema de esos servicios (unos 2 MiB más de RAM mientras suenan) y, si los apagás, se cierra al pasar al siguiente tema.
-- YouTube no tiene inicio de sesión (su biblioteca sale de links públicos, ver arriba); de SoundCloud se carga la biblioteca pública (ver arriba). *Similares* y *Agregar a playlist* son solo para temas de Spotify.
+- En YouTube el inicio de sesión es opcional (sin sesión, la biblioteca sale de links públicos; ver arriba); de SoundCloud se carga la biblioteca pública (ver arriba). *Similares* y *Agregar a playlist* son solo para temas de Spotify.
 - En SoundCloud, algunos temas son vistas previas de 30 s (los que exigen SoundCloud Go+); los temas con cifrado no se pueden reproducir y se saltean.
 - Si YouTube o SoundCloud cambian algo de su lado, puede dejar de andar hasta la próxima versión de Spoti.
 
