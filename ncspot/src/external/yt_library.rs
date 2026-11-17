@@ -2,12 +2,15 @@
 //! Parseo de las respuestas de YouTube Music (`WEB_REMIX`) y, para canales comunes, de `WEB`.
 
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use regex::Regex;
 use serde_json::{json, Value};
+use sha1::{Digest, Sha1};
 use url::Url;
 
 use crate::config::config_path;
+use crate::external::firefox_cookies::is_session_cookie;
 use crate::model::album::Album;
 use crate::model::playlist::Playlist;
 use crate::model::track::{Source, Track};
@@ -316,14 +319,20 @@ const WEB_PLAYLISTS_TAB: &str = "EglwbGF5bGlzdHPyBgQKAkIA";
 
 /// Pedido `browse` sin sesión; `remix` = YouTube Music (`WEB_REMIX`), si no la web (`WEB`).
 /// `root`: primer pedido de un link; ahí un 400/404 significa que el link no existe.
-fn browse(remix: bool, root: bool, mut body: Value) -> Result<Value, String> {
+fn browse(remix: bool, root: bool, body: Value) -> Result<Value, String> {
+    let (host, body) = client_body(remix, body);
+    post(host, "browse?prettyPrint=false", root, &body)
+}
+
+/// Host y cuerpo con el contexto de cliente (`WEB_REMIX` o `WEB`).
+fn client_body(remix: bool, mut body: Value) -> (&'static str, Value) {
     let (host, name, version) = if remix {
         ("https://music.youtube.com", "WEB_REMIX", "1.20251110.01.00")
     } else {
         ("https://www.youtube.com", "WEB", "2.20251110.00.00")
     };
     body["context"] = json!({"client": {"clientName": name, "clientVersion": version, "hl": "es", "gl": "AR"}});
-    post(host, "browse?prettyPrint=false", root, &body)
+    (host, body)
 }
 
 fn post(host: &str, path: &str, root: bool, body: &Value) -> Result<Value, String> {
@@ -463,6 +472,164 @@ pub fn set_links(urls: &[String]) -> Result<(), String> {
     std::fs::write(path, urls.join("\n")).map_err(|e| e.to_string())
 }
 
+const COOKIE_FILE: &str = "youtube_cookies";
+const FIREFOX_FILE: &str = "youtube_firefox";
+const NO_SAPISID: &str = "Error: Eso no parece la cookie de music.youtube.com (falta SAPISID)";
+
+fn read_trimmed(name: &str) -> Option<String> {
+    let t = std::fs::read_to_string(config_path(name)).ok()?;
+    Some(t.trim().to_string()).filter(|t| !t.is_empty())
+}
+
+/// `None` borra el archivo; en Unix se crea con permisos 0600.
+fn write_private(name: &str, value: Option<&str>) -> Result<(), String> {
+    let path = config_path(name);
+    let Some(value) = value else {
+        return match std::fs::remove_file(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        };
+    };
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    std::io::Write::write_all(&mut opts.open(path).map_err(|e| e.to_string())?, value.as_bytes()).map_err(|e| e.to_string())
+}
+
+pub fn session_cookie() -> Option<String> {
+    read_trimmed(COOKIE_FILE)
+}
+
+pub fn set_session_cookie(cookie: Option<&str>) -> Result<(), String> {
+    write_private(COOKIE_FILE, cookie)
+}
+
+/// Perfil de Firefox para renovar la sesión; existe solo si el usuario lo permitió.
+pub fn firefox_profile() -> Option<PathBuf> {
+    read_trimmed(FIREFOX_FILE).map(PathBuf::from)
+}
+
+pub fn set_firefox_profile(profile: Option<&Path>) -> Result<(), String> {
+    write_private(FIREFOX_FILE, profile.map(|p| p.to_string_lossy()).as_deref())
+}
+
+fn cookie_value<'a>(cookie: &'a str, name: &str) -> Option<&'a str> {
+    cookie.split(';').filter_map(|p| p.trim().split_once('=')).find(|(n, _)| *n == name).map(|(_, v)| v)
+}
+
+/// Deja solo las cookies de sesión de lo pegado (con o sin `Cookie:`).
+pub fn clean_pasted_cookie(input: &str) -> Result<String, String> {
+    let input = input.trim();
+    let input = match input.get(..7) {
+        Some(p) if p.eq_ignore_ascii_case("cookie:") => &input[7..],
+        _ => input,
+    };
+    let kept: Vec<&str> = input
+        .split(';')
+        .map(str::trim)
+        .filter(|p| p.split_once('=').is_some_and(|(n, _)| is_session_cookie(n)))
+        .collect();
+    let joined = kept.join("; ");
+    if cookie_value(&joined, "SAPISID").is_none() && cookie_value(&joined, "__Secure-3PAPISID").is_none() {
+        return Err(NO_SAPISID.into());
+    }
+    Ok(joined)
+}
+
+/// Encabezado `Authorization` (SAPISIDHASH); `None` sin SAPISID ni `__Secure-3PAPISID`.
+pub fn auth_header(cookie: &str, ts: u64) -> Option<String> {
+    let hash = |v: &str| format!("{ts}_{:x}", Sha1::digest(format!("{ts} {v} https://music.youtube.com")));
+    let parts: Vec<String> = [("SAPISID", "SAPISIDHASH"), ("__Secure-1PAPISID", "SAPISID1PHASH"), ("__Secure-3PAPISID", "SAPISID3PHASH")]
+        .iter()
+        .filter_map(|(c, label)| cookie_value(cookie, c).map(|v| format!("{label} {}", hash(v))))
+        .collect();
+    (cookie_value(cookie, "SAPISID").is_some() || cookie_value(cookie, "__Secure-3PAPISID").is_some()).then(|| parts.join(" "))
+}
+
+/// Valor de `logged_in` de la respuesta; `None` si no viene.
+pub fn logged_in(json: &Value) -> Option<bool> {
+    let mut params = json["responseContext"]["serviceTrackingParams"].as_array()?.iter().flat_map(|s| s["params"].as_array().into_iter().flatten());
+    params.find(|p| p["key"] == "logged_in").map(|p| p["value"] == "1")
+}
+
+/// Lo que la cuenta tiene guardado en YouTube Music.
+pub struct YtSessionLibrary {
+    pub tracks: Vec<Track>,
+    pub playlists: Vec<Playlist>,
+    pub albums: Vec<Album>,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum SessionError {
+    /// La sesión ya no vale: hay que renovarla o pegarla de nuevo.
+    Expired,
+    Other(String),
+}
+
+/// Listas de la cuenta, sin el botón "Nueva lista" ni "Música que me gusta" (`LM`, se pide aparte).
+pub fn parse_liked_playlists(json: &Value) -> Vec<Playlist> {
+    let mut v = parse_playlist_grid(json, "Tú");
+    v.retain(|p| p.id != "LM");
+    v
+}
+
+/// Álbumes guardados; el artista sale del subtítulo ("Álbum • Artista • 2020").
+pub fn parse_liked_albums(json: &Value) -> Vec<Album> {
+    let is_year = |t: &str| t.len() == 4 && t.chars().all(|c| c.is_ascii_digit());
+    two_row_items(json)
+        .into_iter()
+        .filter_map(|i| {
+            let artist = runs_texts(&i["subtitle"]).map(str::trim).filter(|t| !t.is_empty() && *t != "•" && !is_year(t)).nth(1).unwrap_or_default();
+            album_from_item(i, artist)
+        })
+        .collect()
+}
+
+/// Pedido autenticado; los errores nunca incluyen encabezados ni cookies.
+fn browse_session(cookie: &str, body: Value) -> Result<Value, SessionError> {
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let auth = auth_header(cookie, ts).ok_or(SessionError::Expired)?;
+    let (host, body) = client_body(true, body);
+    let res = super::http()
+        .post(format!("{host}/youtubei/v1/browse?prettyPrint=false"))
+        .header("Origin", host)
+        .header("X-Origin", host)
+        .header("X-Goog-AuthUser", "0")
+        .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0")
+        .header("Cookie", cookie)
+        .header("Authorization", auth)
+        .json(&body)
+        .send()
+        .map_err(|e| SessionError::Other(format!("No pude conectar con YouTube ({})", if e.is_timeout() { "tiempo agotado" } else { "red" })))?;
+    match res.status().as_u16() {
+        401 | 403 => return Err(SessionError::Expired),
+        s if !(200..300).contains(&s) => return Err(SessionError::Other(format!("YouTube respondió HTTP {s}"))),
+        _ => {}
+    }
+    let json: Value = res.json().map_err(|_| SessionError::Other("Respuesta ilegible de YouTube".into()))?;
+    if logged_in(&json) == Some(false) {
+        return Err(SessionError::Expired);
+    }
+    Ok(json)
+}
+
+/// Canciones que me gustan (`VLLM`, con continuaciones), listas y álbumes de la cuenta.
+pub fn fetch_session_library(cookie: &str) -> Result<YtSessionLibrary, SessionError> {
+    let (mut tracks, mut body) = (Vec::new(), json!({"browseId": "VLLM"}));
+    for _ in 0..MAX_PAGES {
+        let (items, next) = parse_track_page(&browse_session(cookie, body)?);
+        tracks.extend(items);
+        match next {
+            Some(t) => body = json!({"continuation": t}),
+            None => break,
+        }
+    }
+    let playlists = parse_liked_playlists(&browse_session(cookie, json!({"browseId": "FEmusic_liked_playlists"}))?);
+    let albums = parse_liked_albums(&browse_session(cookie, json!({"browseId": "FEmusic_liked_albums"}))?);
+    Ok(YtSessionLibrary { tracks, playlists, albums })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -574,6 +741,72 @@ mod tests {
     fn dedup_across_links() {
         let lib = merge_contents(vec![content(&["a", "b"]), content(&["c", "a"])]);
         assert_eq!(lib.playlists.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["a", "b", "c"]);
+    }
+
+    fn grid_item(title: &str, id: Option<&str>, subtitle: &[&str]) -> Value {
+        let nav = id.map_or(json!({}), |i| json!({"browseEndpoint": {"browseId": i}}));
+        json!({"musicTwoRowItemRenderer": {
+            "title": {"runs": [{"text": title, "navigationEndpoint": nav}]},
+            "subtitle": {"runs": subtitle.iter().map(|t| json!({"text": t})).collect::<Vec<_>>()}}})
+    }
+
+    #[test]
+    fn clean_pasted_cookie_keeps_session_only() {
+        assert_eq!(
+            clean_pasted_cookie("Cookie: SID=a; ST-x=b; SAPISID=c; __Secure-3PSIDTS=d; YSC=e").unwrap(),
+            "SID=a; SAPISID=c; __Secure-3PSIDTS=d; YSC=e"
+        );
+        assert!(clean_pasted_cookie("SID=a; YSC=e").unwrap_err().contains("falta SAPISID"));
+    }
+
+    #[test]
+    fn auth_header_format() {
+        let h = auth_header("SAPISID=abc; __Secure-3PAPISID=xyz", 1700000000).unwrap();
+        let want = format!("SAPISIDHASH 1700000000_{:x}", Sha1::digest("1700000000 abc https://music.youtube.com"));
+        assert!(h.starts_with(&want) && want.len() == "SAPISIDHASH 1700000000_".len() + 40);
+        assert!(h.contains("SAPISID3PHASH 1700000000_") && !h.contains("SAPISID1PHASH"));
+        assert!(auth_header("SID=a", 1).is_none());
+    }
+
+    #[test]
+    fn logged_in_flag() {
+        let f = |v: &str| json!({"responseContext": {"serviceTrackingParams": [{"params": [{"key": "x", "value": "1"}, {"key": "logged_in", "value": v}]}]}});
+        assert_eq!(logged_in(&f("1")), Some(true));
+        assert_eq!(logged_in(&f("0")), Some(false));
+        assert_eq!(logged_in(&json!({})), None);
+    }
+
+    #[test]
+    fn liked_playlists_skip_new_and_lm() {
+        let j = json!({"items": [grid_item("Nueva lista", None, &[]), grid_item("Me gusta", Some("VLLM"), &[]), grid_item("Mi lista", Some("VLPL123"), &[])]});
+        let p = parse_liked_playlists(&j);
+        assert_eq!((p.len(), p[0].id.as_str(), p[0].name.as_str()), (1, "PL123", "Mi lista"));
+    }
+
+    #[test]
+    fn liked_albums_from_grid() {
+        let j = json!({"items": [
+            grid_item("Uno", Some("MPREb_a"), &["Álbum", " • ", "Artista A", " • ", "2020"]),
+            grid_item("Dos", Some("MPREb_b"), &["Álbum", " • ", "Artista B", " • ", "2019"])]});
+        let a = parse_liked_albums(&j);
+        assert_eq!(a.len(), 2);
+        assert_eq!((a[0].artists.clone(), a[1].artists.clone()), (vec!["Artista A".to_string()], vec!["Artista B".to_string()]));
+        assert!(parse_liked_albums(&json!({"contents": []})).is_empty());
+    }
+
+    #[test]
+    fn session_files_roundtrip() {
+        let _g = crate::config::test_sandbox();
+        assert!(session_cookie().is_none() && firefox_profile().is_none());
+        set_session_cookie(Some("SAPISID=c")).unwrap();
+        assert_eq!(session_cookie().as_deref(), Some("SAPISID=c"));
+        #[cfg(unix)]
+        assert_eq!(std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(config_path(COOKIE_FILE)).unwrap().permissions()) & 0o777, 0o600);
+        set_firefox_profile(Some(Path::new("/x/y.default-esr"))).unwrap();
+        assert_eq!(firefox_profile(), Some(PathBuf::from("/x/y.default-esr")));
+        set_session_cookie(None).unwrap();
+        set_firefox_profile(None).unwrap();
+        assert!(session_cookie().is_none() && firefox_profile().is_none());
     }
 
     #[test]
