@@ -10,6 +10,7 @@ use std::time::Duration;
 use crate::config;
 use crate::model::track::{Source, Track};
 
+pub mod firefox_cookies;
 pub mod hls;
 pub mod player;
 pub mod sc_library;
